@@ -204,37 +204,38 @@ function buildArenaInsufficientBalanceText(
 
 function buildStartWelcomeText(): string {
   return [
-    "🏆 *HeadlineOdds Arena*",
+    "🏟 *HeadlineOdds Arena*",
     "",
-    "BTC fantasy trading on Solana\\.",
-    "Predict price moves, grow your stack, win real USDC\\.",
+    "Trade BTC UP/DOWN in 15\\-min rounds\\. Best bankroll wins USDC\\.",
+    "",
+    "_Fund your wallet to enter an arena\\._",
   ].join("\n");
 }
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("▶ How it works", START_HOW_IT_WORKS)
-    .text("🏟 Browse Arenas", START_LOBBY);
+    .text("💳 Fund Wallet", START_WALLET)
+    .row()
+    .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
 function buildHowItWorksText(): string {
   return [
-    "❓ How it works",
+    "❓ *How it works*",
     "",
-    "1. Open /wallet — get your Solana USDC deposit address",
-    "2. Deposit USDC (or fund via Naira bank transfer)",
-    "3. Join an arena — entry fee $1–$10",
-    "4. Each 15-min BTC round: pick UP or DOWN",
-    "5. Best virtual bankroll at the end wins the prize pool",
+    "1\\. Deposit USDC or fund via Naira bank transfer",
+    "2\\. Join an arena — entry fee $1–$10",
+    "3\\. Each 15\\-min round: pick UP ↑ or DOWN ↓",
+    "4\\. Best bankroll at the end wins the prize pool",
     "",
-    "Winnings go straight to your in-bot balance.",
-    "Withdraw anytime to any Solana wallet.",
+    "_Winnings land in your balance\\. Withdraw anytime\\._",
   ].join("\n");
 }
 
 function buildHowItWorksKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🏟 Browse Arenas", START_LOBBY)
+    .text("🏟 Enter Arena", START_LOBBY)
+    .row()
     .text("💳 Wallet", START_WALLET);
 }
 
@@ -257,26 +258,20 @@ function buildStartOnboardingText(input: {
   const name = input.firstName.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   const balance = input.balance.toFixed(2).replace(/[.]/g, '\\$&');
   return [
-    `👋 *Hey ${name}\\!*`,
+    `🏟 *HeadlineOdds Arena*`,
     "",
-    "🏆 *HeadlineOdds Arena*",
-    "_Predict BTC price moves\\. Win real USDC\\._",
+    `Hey ${name} — pick an arena, trade BTC UP/DOWN, win USDC\\.`,
     "",
-    "• Pay a small entry fee \\($1–$10\\)",
-    "• Trade BTC UP/DOWN each 15\\-min round",
-    "• Best bankroll wins the prize pool",
-    "",
-    `💳 Balance: \`$${balance} USDC\``,
+    `💳 *Balance:* \`$${balance} USDC\``,
   ].join("\n");
 }
 
 function buildStartOnboardingKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🏟 Browse Arenas", START_LOBBY)
-    .text("💳 Wallet", START_WALLET)
+    .text("🏟 Enter Arena", START_LOBBY)
     .row()
-    .text("❓ How it works", START_HOW_IT_WORKS)
-    .text("💵 Fund NGN", WALLET_NAIRA_HELP);
+    .text("💳 Wallet", START_WALLET)
+    .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
 function buildCreateArenaPickerText(balance: number): string {
@@ -1792,6 +1787,14 @@ export async function handleStart(ctx: Context): Promise<void> {
   }
 
   const balance = await getBalance(ctx.from.id);
+
+  if (balance <= 0) {
+    await ctx.reply(buildStartWelcomeText(), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildStartWelcomeKeyboard(),
+    });
+    return;
+  }
 
   await ctx.reply(
     buildStartOnboardingText({
