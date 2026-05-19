@@ -2583,21 +2583,14 @@ function buildOfframpOrderText(input: {
   fundingSignature: string;
 }): string {
   return [
-    "✅ Offramp order created.",
+    "✅ Withdrawal submitted!",
     "",
-    `Order ID: ${input.orderId}`,
-    `USDC debited: ${formatUsdc(input.usdcAmount)}`,
-    `Naira to receive: ${formatNaira(input.fiatAmount)}`,
+    `${formatNairaCompact(input.fiatAmount)} is on its way to your bank.`,
     "",
-    "USDC transfer submitted to PajCash.",
-    `Funding tx: ${input.fundingSignature}`,
+    `🏦 ${input.accountName}`,
+    `${input.accountNumber} · ${input.bankName}`,
     "",
-    "Sending to:",
-    `${input.accountName}`,
-    `${input.accountNumber}`,
-    `${input.bankName}`,
-    "",
-    "PajCash will send the Naira to your bank account after receiving the USDC.",
+    `Ref: ${input.orderId}`,
   ].join("\n");
 }
 
