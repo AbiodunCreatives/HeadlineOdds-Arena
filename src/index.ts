@@ -27,8 +27,7 @@ import {
   handleWallet,
   handleAdminWithdraw,
 } from "./bot/handlers/league.ts";
-import { config } from "./config.ts";
-import { isTesterAllowed } from "./config.ts";
+import { config, isTesterAllowed } from "./config.ts";
 import { supabase } from "./db/client.ts";
 import { upsertUserProfile } from "./db/users.ts";
 import { startFantasyMonitor, stopFantasyMonitor } from "./fantasy-monitor.ts";
