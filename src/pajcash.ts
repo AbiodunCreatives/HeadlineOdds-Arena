@@ -1,3 +1,5 @@
+import { randomUUID } from "crypto";
+
 import { config } from "./config.ts";
 import {
   createPajCashOnrampRecord,
@@ -10,8 +12,11 @@ import { getBalance, debitBalance } from "./db/balances.ts";
 import { getFantasyWalletByOwnerAddress, type FantasyWallet } from "./db/wallets.ts";
 import {
   ensureFantasyWallet,
+  getFantasyWalletOnChainUsdcBalance,
   syncFantasyWalletDeposits,
+  transferFantasyWalletUsdc,
 } from "./solana-wallet.ts";
+import { withUserWalletOperationLock } from "./utils/user-wallet-operation-lock.ts";
 
 interface PajCashVerifyResponse {
   recipient: string;
@@ -99,6 +104,7 @@ export interface PajCashWebhookPayload {
 }
 
 const PAJCASH_REQUEST_TIMEOUT_MS = 20_000;
+const USDC_EPSILON = 0.000001;
 
 function roundFiat(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -106,6 +112,10 @@ function roundFiat(value: number): number {
 
 function roundUsdc(value: number): number {
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+}
+
+function amountsMatch(left: number, right: number): boolean {
+  return Math.abs(roundUsdc(left) - roundUsdc(right)) <= USDC_EPSILON;
 }
 
 function getPajCashBaseUrl(): string {
@@ -400,73 +410,265 @@ export async function confirmBankAccount(input: {
 
 export const PAJCASH_OFFRAMP_MIN_USDC = 0.5;
 
+async function finalizeOfframpInternalDebit(input: {
+  telegramId: number;
+  usdcAmount: number;
+  requestId: string;
+  orderId: string;
+  debitIdempotencyKey: string;
+  userWalletAddress: string;
+  pajcashDepositAddress: string;
+  pajcashFundingSignature: string;
+}): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const debited = await debitBalance(input.telegramId, input.usdcAmount, {
+        reason: "offramp_request",
+        referenceType: "pajcash_offramp",
+        idempotencyKey: input.debitIdempotencyKey,
+        metadata: {
+          requestId: input.requestId,
+          requestedUsdcAmount: input.usdcAmount,
+          orderId: input.orderId,
+          userWalletAddress: input.userWalletAddress,
+          pajcashDepositAddress: input.pajcashDepositAddress,
+          pajcashFundingSignature: input.pajcashFundingSignature,
+        },
+      });
+
+      if (debited) {
+        return;
+      }
+
+      lastError = new Error(
+        "USDC transfer to PajCash succeeded, but the internal wallet balance could not be finalized."
+      );
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error("Unknown internal debit error during PajCash offramp.");
+    }
+  }
+
+  throw lastError ?? new Error("Failed to finalize the PajCash offramp debit.");
+}
+
+export interface PajCashOfframpResult {
+  order: PajCashOnramp;
+  fundingSignature: string;
+  destinationUsdcAta: string;
+}
+
 export async function createFantasyPajCashOfframp(input: {
   telegramId: number;
   bankId: string;
   accountNumber: string;
   usdcAmount: number;
-}): Promise<PajCashOnramp> {
-  const usdcAmount = roundUsdc(input.usdcAmount);
-
-  if (!Number.isFinite(usdcAmount) || usdcAmount < PAJCASH_OFFRAMP_MIN_USDC) {
-    throw new Error(`Minimum offramp amount is ${PAJCASH_OFFRAMP_MIN_USDC} USDC.`);
-  }
-
-  const balance = await getBalance(input.telegramId);
-
-  if (balance < usdcAmount) {
-    throw new Error(`Insufficient wallet balance. Available: ${balance} USDC.`);
-  }
-
-  const sessionToken = getRequiredPajCashSessionToken();
-  const wallet = await ensureFantasyWallet(input.telegramId);
-
-  const requestBody: Record<string, unknown> = {
-    bank: input.bankId,
-    accountNumber: input.accountNumber,
-    currency: "NGN",
-    amount: usdcAmount,
-    mint: config.SOLANA_USDC_MINT,
-    chain: "SOLANA",
-    webhookURL: getPajCashWebhookUrl(),
-  };
-
-  if (config.PAJCASH_BUSINESS_USDC_FEE !== undefined) {
-    requestBody.businessUSDCFee = config.PAJCASH_BUSINESS_USDC_FEE;
-  }
-
-  const order = await pajCashRequest<PajCashOfframpOrderResponse>("/pub/offramp", {
-    method: "POST",
-    token: sessionToken,
-    body: requestBody,
-  });
-
-  // Debit the user's balance before returning the deposit address
-  const debited = await debitBalance(input.telegramId, usdcAmount, {
-    reason: "offramp_request",
-    referenceType: "pajcash_offramp",
-    metadata: { orderId: order.id },
-  });
-
-  if (!debited) {
-    throw new Error(`Insufficient wallet balance to offramp ${usdcAmount} USDC.`);
-  }
-
-  return createPajCashOfframpRecord({
-    orderId: order.id,
+}): Promise<PajCashOfframpResult> {
+  return withUserWalletOperationLock({
     telegramId: input.telegramId,
-    senderAddress: wallet.owner_address,
-    depositAddress: order.address,
-    mint: order.mint,
-    chain: "SOLANA",
-    currency: order.currency,
-    bankId: input.bankId,
-    accountNumber: input.accountNumber,
-    usdcAmount: order.amount,
-    fiatAmount: order.fiatAmount,
-    rate: order.rate,
-    fee: order.fee ?? config.PAJCASH_BUSINESS_USDC_FEE ?? 0,
-    rawPayload: order as unknown as Record<string, unknown>,
+    reason: "pajcash_offramp",
+    task: async () => {
+      const usdcAmount = roundUsdc(input.usdcAmount);
+
+      if (!Number.isFinite(usdcAmount) || usdcAmount < PAJCASH_OFFRAMP_MIN_USDC) {
+        throw new Error(`Minimum offramp amount is ${PAJCASH_OFFRAMP_MIN_USDC} USDC.`);
+      }
+
+      const wallet = await ensureFantasyWallet(input.telegramId);
+      await syncFantasyWalletDeposits(wallet);
+
+      const [internalBalance, onChainBalance] = await Promise.all([
+        getBalance(input.telegramId),
+        getFantasyWalletOnChainUsdcBalance({ wallet }),
+      ]);
+
+      if (internalBalance < usdcAmount) {
+        throw new Error(`Insufficient wallet balance. Available: ${internalBalance} USDC.`);
+      }
+
+      if (onChainBalance + USDC_EPSILON < usdcAmount) {
+        throw new Error(
+          `Insufficient on-chain in-bot wallet balance. Available on-chain: ${onChainBalance} USDC.`
+        );
+      }
+
+      const sessionToken = getRequiredPajCashSessionToken();
+      const requestId = randomUUID();
+      const debitIdempotencyKey = `pajcash_offramp:${requestId}:debit`;
+
+      const requestBody: Record<string, unknown> = {
+        bank: input.bankId,
+        accountNumber: input.accountNumber,
+        currency: "NGN",
+        amount: usdcAmount,
+        mint: config.SOLANA_USDC_MINT,
+        chain: "SOLANA",
+        webhookURL: getPajCashWebhookUrl(),
+      };
+
+      if (config.PAJCASH_BUSINESS_USDC_FEE !== undefined) {
+        requestBody.businessUSDCFee = config.PAJCASH_BUSINESS_USDC_FEE;
+      }
+
+      let order: PajCashOfframpOrderResponse | null = null;
+      let record: PajCashOnramp | null = null;
+      let transfer:
+        | {
+            signature: string;
+            destinationUsdcAta: string;
+          }
+        | null = null;
+
+      try {
+        order = await pajCashRequest<PajCashOfframpOrderResponse>("/pub/offramp", {
+          method: "POST",
+          token: sessionToken,
+          body: requestBody,
+        });
+
+        if (!order.address?.trim()) {
+          throw new Error("PajCash offramp order did not return a deposit address.");
+        }
+
+        if (!amountsMatch(order.amount, usdcAmount)) {
+          throw new Error(
+            `PajCash quoted ${roundUsdc(order.amount)} USDC for a ${usdcAmount} USDC offramp.`
+          );
+        }
+
+        record = await createPajCashOfframpRecord({
+          orderId: order.id,
+          telegramId: input.telegramId,
+          senderAddress: wallet.owner_address,
+          depositAddress: order.address,
+          mint: order.mint,
+          chain: "SOLANA",
+          currency: order.currency,
+          bankId: input.bankId,
+          accountNumber: input.accountNumber,
+          usdcAmount,
+          fiatAmount: order.fiatAmount,
+          rate: order.rate,
+          fee: order.fee ?? config.PAJCASH_BUSINESS_USDC_FEE ?? 0,
+          rawPayload: {
+            ...order,
+            botRequestId: requestId,
+            botFundingSource: wallet.owner_address,
+            requestedUsdcAmount: usdcAmount,
+            debitIdempotencyKey,
+          } as Record<string, unknown>,
+        });
+
+        transfer = await transferFantasyWalletUsdc({
+          wallet,
+          destinationAddress: order.address,
+          amount: usdcAmount,
+        });
+
+        await finalizeOfframpInternalDebit({
+          telegramId: input.telegramId,
+          usdcAmount,
+          requestId,
+          orderId: order.id,
+          debitIdempotencyKey,
+          userWalletAddress: wallet.owner_address,
+          pajcashDepositAddress: order.address,
+          pajcashFundingSignature: transfer.signature,
+        });
+
+        try {
+          record = await upsertPajCashOnrampStatus({
+            orderId: record.order_id,
+            telegramId: record.telegram_id,
+            recipientAddress: record.recipient_address,
+            sender: record.sender,
+            mint: record.mint,
+            chain: record.chain,
+            currency: record.currency,
+            bankName: record.bank_name,
+            accountName: record.account_name,
+            accountNumber: record.account_number,
+            fiatAmount: record.fiat_amount,
+            expectedUsdcAmount: record.expected_usdc_amount,
+            actualUsdcAmount: record.actual_usdc_amount,
+            rate: record.rate,
+            fee: record.fee,
+            status: record.status,
+            transactionType: record.transaction_type,
+            pajSignature: record.paj_signature,
+            rawPayload: {
+              ...record.raw_payload,
+              botFundingSignature: transfer.signature,
+              botFundingDestinationUsdcAta: transfer.destinationUsdcAta,
+              botFundingSentAt: new Date().toISOString(),
+              botInternalDebitFinalizedAt: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          console.warn("[pajcash] Failed to persist offramp funding metadata:", error);
+        }
+
+        return {
+          order: record,
+          fundingSignature: transfer.signature,
+          destinationUsdcAta: transfer.destinationUsdcAta,
+        };
+      } catch (error) {
+        const reason =
+          error instanceof Error ? error.message : "Unknown PajCash offramp error.";
+
+        if (record) {
+          try {
+            await upsertPajCashOnrampStatus({
+              orderId: record.order_id,
+              telegramId: record.telegram_id,
+              recipientAddress: record.recipient_address,
+              sender: record.sender,
+              mint: record.mint,
+              chain: record.chain,
+              currency: record.currency,
+              bankName: record.bank_name,
+              accountName: record.account_name,
+              accountNumber: record.account_number,
+              fiatAmount: record.fiat_amount,
+              expectedUsdcAmount: record.expected_usdc_amount,
+              actualUsdcAmount: record.actual_usdc_amount,
+              rate: record.rate,
+              fee: record.fee,
+              status: record.status,
+              transactionType: record.transaction_type,
+              pajSignature: record.paj_signature,
+              rawPayload: {
+                ...record.raw_payload,
+                ...(transfer
+                  ? {
+                      botFundingSignature: transfer.signature,
+                      botFundingDestinationUsdcAta: transfer.destinationUsdcAta,
+                      botFundingSentAt: new Date().toISOString(),
+                    }
+                  : {}),
+                botFundingFailedAt: new Date().toISOString(),
+                botFundingError: reason,
+              },
+            });
+          } catch (updateError) {
+            console.warn("[pajcash] Failed to persist offramp error metadata:", updateError);
+          }
+        }
+
+        if (transfer) {
+          throw new Error(
+            `USDC was sent from your in-bot wallet to PajCash, but the offramp could not be finalized automatically. ${reason} Contact support with order ${order?.id ?? requestId}.`
+          );
+        }
+
+        throw new Error(`Offramp could not be created. ${reason}`);
+      }
+    },
   });
 }
 
@@ -511,10 +713,28 @@ export async function reconcilePajCashWebhook(
   }
 
   const existing = await getPajCashOnrampByOrderId(payload.id);
+  const preservedExpectedUsdcAmount =
+    existing && existing.expected_usdc_amount > 0
+      ? existing.expected_usdc_amount
+      : getPayloadUsdcAmount(payload);
   let wallet =
     existing?.recipient_address
       ? await getFantasyWalletByOwnerAddress(existing.recipient_address)
       : await resolveOnrampWallet(payload);
+
+  const initialActualUsdcAmount = getPayloadUsdcAmount(payload);
+  const initialAmountMismatch =
+    (existing?.transaction_type ?? transactionType) === "OFF_RAMP" &&
+    preservedExpectedUsdcAmount !== null &&
+    initialActualUsdcAmount !== null &&
+    !amountsMatch(preservedExpectedUsdcAmount, initialActualUsdcAmount);
+
+  if (initialAmountMismatch) {
+    console.error(
+      `[pajcash] Offramp amount mismatch for order ${payload.id}: ` +
+        `expected ${preservedExpectedUsdcAmount}, got ${initialActualUsdcAmount}.`
+    );
+  }
 
   let record = await upsertPajCashOnrampStatus({
     orderId: payload.id,
@@ -524,15 +744,21 @@ export async function reconcilePajCashWebhook(
     mint: payload.mint ?? existing?.mint ?? null,
     chain: "SOLANA",
     currency: payload.currency ?? existing?.currency ?? "NGN",
-    actualUsdcAmount: getPayloadUsdcAmount(payload),
-    expectedUsdcAmount: getPayloadUsdcAmount(payload),
+    actualUsdcAmount: initialActualUsdcAmount,
+    expectedUsdcAmount: preservedExpectedUsdcAmount,
     fiatAmount:
       typeof payload.fiatAmount === "number" ? roundFiat(payload.fiatAmount) : null,
     rate: typeof payload.rate === "number" ? roundUsdc(payload.rate) : null,
     status: payloadStatus,
     transactionType: transactionType || existing?.transaction_type || "ON_RAMP",
     pajSignature: payload.signature ?? existing?.paj_signature ?? null,
-    rawPayload: payload as unknown as Record<string, unknown>,
+    rawPayload: initialAmountMismatch
+      ? {
+          ...(payload as unknown as Record<string, unknown>),
+          botExpectedUsdcAmount: preservedExpectedUsdcAmount,
+          botAmountMismatch: true,
+        }
+      : (payload as unknown as Record<string, unknown>),
   });
 
   if (!wallet && record.recipient_address) {
@@ -541,6 +767,19 @@ export async function reconcilePajCashWebhook(
 
   try {
     const verified = await getPajCashTransaction(payload.id);
+    const verifiedActualUsdcAmount = getPayloadUsdcAmount(verified);
+    const verifiedAmountMismatch =
+      (record.transaction_type ?? transactionType) === "OFF_RAMP" &&
+      record.expected_usdc_amount > 0 &&
+      verifiedActualUsdcAmount !== null &&
+      !amountsMatch(record.expected_usdc_amount, verifiedActualUsdcAmount);
+
+    if (verifiedAmountMismatch) {
+      console.error(
+        `[pajcash] Verified offramp amount mismatch for order ${payload.id}: ` +
+          `expected ${record.expected_usdc_amount}, got ${verifiedActualUsdcAmount}.`
+      );
+    }
 
     record = await upsertPajCashOnrampStatus({
       orderId: payload.id,
@@ -550,7 +789,7 @@ export async function reconcilePajCashWebhook(
       mint: verified.mint ?? record.mint,
       chain: "SOLANA",
       currency: verified.currency ?? record.currency,
-      actualUsdcAmount: getPayloadUsdcAmount(verified),
+      actualUsdcAmount: verifiedActualUsdcAmount,
       expectedUsdcAmount:
         record.expected_usdc_amount > 0
           ? record.expected_usdc_amount
@@ -564,7 +803,13 @@ export async function reconcilePajCashWebhook(
       status: normalizePajCashStatus(verified.status),
       transactionType: verified.transactionType ?? record.transaction_type,
       pajSignature: verified.signature ?? record.paj_signature,
-      rawPayload: verified as unknown as Record<string, unknown>,
+      rawPayload: verifiedAmountMismatch
+        ? {
+            ...(verified as unknown as Record<string, unknown>),
+            botExpectedUsdcAmount: record.expected_usdc_amount,
+            botAmountMismatch: true,
+          }
+        : (verified as unknown as Record<string, unknown>),
     });
 
     if (!wallet && record.recipient_address) {

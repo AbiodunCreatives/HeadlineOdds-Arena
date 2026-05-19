@@ -72,10 +72,18 @@ import {
   getProjectedPrizeForUser,
   getVirtualReturnPct,
 } from "./fantasy-ui.ts";
+import {
+  ensureFantasyWallet,
+  getFantasyWalletOnChainUsdcBalance,
+  syncFantasyWalletDeposits,
+  transferUsdcForArenaEntry,
+  transferUsdcFromTreasury,
+} from "./solana-wallet.ts";
 import { recordRevenueOnce } from "./db/revenue.ts";
 import { redis } from "./utils/rateLimit.ts";
 import { isDevUser, DEV_MIN_ENTRY_FEE, DEV_VIRTUAL_BANKROLL } from "./utils/devOverrides.ts";
 import { escapeMarkdown } from "./utils/escape.ts";
+import { withUserWalletOperationLock } from "./utils/user-wallet-operation-lock.ts";
 
 
 const tgApi = new Api(config.BOT_TOKEN);
@@ -116,6 +124,45 @@ interface FantasyTradeRefPayload {
 
 function isOptionalString(value: unknown): value is string | null | undefined {
   return value === null || value === undefined || typeof value === "string";
+}
+
+async function collectArenaEntryUsdc(input: {
+  telegramId: number;
+  amount: number;
+}): Promise<void> {
+  const normalizedAmount = roundMoney(input.amount);
+  const wallet = await ensureFantasyWallet(input.telegramId);
+  await syncFantasyWalletDeposits(wallet);
+
+  const [internalBalance, onChainBalance] = await Promise.all([
+    getBalance(input.telegramId),
+    getFantasyWalletOnChainUsdcBalance({ wallet }),
+  ]);
+
+  if (internalBalance < normalizedAmount) {
+    throw new Error(`Insufficient play balance. Available: ${internalBalance} USDC.`);
+  }
+
+  if (onChainBalance < normalizedAmount) {
+    throw new Error(
+      `Insufficient on-chain in-bot wallet balance. Available on-chain: ${onChainBalance} USDC.`
+    );
+  }
+
+  await transferUsdcForArenaEntry({
+    telegramId: input.telegramId,
+    amount: normalizedAmount,
+  });
+}
+
+async function refundArenaEntryUsdcToUser(input: {
+  telegramId: number;
+  amount: number;
+}): Promise<void> {
+  await transferUsdcFromTreasury({
+    telegramId: input.telegramId,
+    amount: roundMoney(input.amount),
+  });
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -1999,86 +2046,143 @@ export async function createFantasyLeagueGame(
   entryFee: number,
   durationHours = FANTASY_DEFAULT_DURATION_HOURS
 ): Promise<FantasyGame> {
-  const normalizedEntryFee = roundMoney(entryFee);
-  const normalizedDurationHours = normalizeFantasyDurationHours(durationHours);
-  const devUser = isDevUser(creatorTelegramId);
-  const minFee = devUser ? DEV_MIN_ENTRY_FEE : FANTASY_MIN_ENTRY_FEE;
+  return withUserWalletOperationLock({
+    telegramId: creatorTelegramId,
+    reason: "arena_create",
+    task: async () => {
+      const normalizedEntryFee = roundMoney(entryFee);
+      const normalizedDurationHours = normalizeFantasyDurationHours(durationHours);
+      const devUser = isDevUser(creatorTelegramId);
+      const minFee = devUser ? DEV_MIN_ENTRY_FEE : FANTASY_MIN_ENTRY_FEE;
 
-  if (
-    normalizedEntryFee < minFee ||
-    normalizedEntryFee > FANTASY_MAX_ENTRY_FEE ||
-    (!devUser && !Number.isInteger(normalizedEntryFee))
-  ) {
-    throw new Error(
-      `Entry fee must be a whole number between $${FANTASY_MIN_ENTRY_FEE} and $${FANTASY_MAX_ENTRY_FEE}.`
-    );
-  }
+      if (
+        normalizedEntryFee < minFee ||
+        normalizedEntryFee > FANTASY_MAX_ENTRY_FEE ||
+        (!devUser && !Number.isInteger(normalizedEntryFee))
+      ) {
+        throw new Error(
+          `Entry fee must be a whole number between $${FANTASY_MIN_ENTRY_FEE} and $${FANTASY_MAX_ENTRY_FEE}.`
+        );
+      }
 
-  // Lobby wait: 10 min for 1hr arenas, 30 min for all others
-  const lobbyWaitMs = normalizedDurationHours === 1 ? 10 * 60 * 1000 : 30 * 60 * 1000;
-  const startAt = new Date(Date.now() + lobbyWaitMs).toISOString();
-  const endAt = new Date(Date.parse(startAt) + getFantasyDurationMs(normalizedDurationHours)).toISOString();
-  const virtualStartBalance = devUser ? DEV_VIRTUAL_BANKROLL : getVirtualStartBalance(normalizedEntryFee);
-  const code = await generateUniqueFantasyGameCode();
-  await upsertUserProfile(creatorTelegramId);
+      // Lobby wait: 10 min for 1hr arenas, 30 min for all others
+      const lobbyWaitMs =
+        normalizedDurationHours === 1 ? 10 * 60 * 1000 : 30 * 60 * 1000;
+      const startAt = new Date(Date.now() + lobbyWaitMs).toISOString();
+      const endAt = new Date(
+        Date.parse(startAt) + getFantasyDurationMs(normalizedDurationHours)
+      ).toISOString();
+      const virtualStartBalance = devUser
+        ? DEV_VIRTUAL_BANKROLL
+        : getVirtualStartBalance(normalizedEntryFee);
+      const code = await generateUniqueFantasyGameCode();
+      await upsertUserProfile(creatorTelegramId);
 
-  // Idempotency lock — prevent double-tap double-debit
-  const lockKey = `arena:entry:lock:${creatorTelegramId}:${code}`;
-  const lockAcquired = await redis.set(lockKey, "1", "EX", 60, "NX");
-  if (!lockAcquired) {
-    throw new Error("Entry already in progress. Please wait a moment and try again.");
-  }
+      // Idempotency lock — prevent double-tap double-debit
+      const lockKey = `arena:entry:lock:${creatorTelegramId}:${code}`;
+      const lockAcquired = await redis.set(lockKey, "1", "EX", 60, "NX");
+      if (!lockAcquired) {
+        throw new Error("Entry already in progress. Please wait a moment and try again.");
+      }
 
-  try {
-    const game = await createFantasyGameWithEntry({
-      code,
-      creatorTelegramId,
-      entryFee: normalizedEntryFee,
-      virtualStartBalance,
-      startAt,
-      endAt,
-      commissionRate: FANTASY_COMMISSION_RATE,
-    });
+      try {
+        await collectArenaEntryUsdc({
+          telegramId: creatorTelegramId,
+          amount: normalizedEntryFee,
+        });
 
-    await redis.del(lockKey);
-    return game;
-  } catch (error) {
-    await redis.del(lockKey);
-    throw error;
-  }
+        try {
+          return await createFantasyGameWithEntry({
+            code,
+            creatorTelegramId,
+            entryFee: normalizedEntryFee,
+            virtualStartBalance,
+            startAt,
+            endAt,
+            commissionRate: FANTASY_COMMISSION_RATE,
+          });
+        } catch (error) {
+          try {
+            await refundArenaEntryUsdcToUser({
+              telegramId: creatorTelegramId,
+              amount: normalizedEntryFee,
+            });
+          } catch (refundError) {
+            console.error(
+              `[fantasy] CRITICAL: arena create refund failed for user ${creatorTelegramId} code ${code} amount ${normalizedEntryFee}:`,
+              refundError
+            );
+            throw new Error(
+              `Arena entry could not be completed, and the on-chain refund back to your in-bot wallet also failed. Contact support with arena code ${code}.`
+            );
+          }
+
+          throw error;
+        }
+      } finally {
+        await redis.del(lockKey);
+      }
+    },
+  });
 }
 
 export async function joinFantasyLeagueGame(
   telegramId: number,
   code: string
 ): Promise<FantasyGame> {
-  await upsertUserProfile(telegramId);
-  const game = await getFantasyGameByCode(code.trim().toUpperCase());
+  return withUserWalletOperationLock({
+    telegramId,
+    reason: "arena_join",
+    task: async () => {
+      await upsertUserProfile(telegramId);
+      const game = await getFantasyGameByCode(code.trim().toUpperCase());
 
-  if (!game) {
-    throw new Error("Arena not found.");
-  }
+      if (!game) {
+        throw new Error("Arena not found.");
+      }
 
-  // Idempotency lock — prevent double-tap double-debit
-  const lockKey = `arena:entry:lock:${telegramId}:${game.code}`;
-  const lockAcquired = await redis.set(lockKey, "1", "EX", 60, "NX");
-  if (!lockAcquired) {
-    throw new Error("Entry already in progress. Please wait a moment and try again.");
-  }
+      // Idempotency lock — prevent double-tap double-debit
+      const lockKey = `arena:entry:lock:${telegramId}:${game.code}`;
+      const lockAcquired = await redis.set(lockKey, "1", "EX", 60, "NX");
+      if (!lockAcquired) {
+        throw new Error("Entry already in progress. Please wait a moment and try again.");
+      }
 
-  try {
-    const joined = await joinFantasyGameWithEntry({
-      code: code.trim().toUpperCase(),
-      telegramId,
-      commissionRate: FANTASY_COMMISSION_RATE,
-    });
+      try {
+        await collectArenaEntryUsdc({
+          telegramId,
+          amount: game.entry_fee,
+        });
 
-    await redis.del(lockKey);
-    return joined;
-  } catch (error) {
-    await redis.del(lockKey);
-    throw error;
-  }
+        try {
+          return await joinFantasyGameWithEntry({
+            code: code.trim().toUpperCase(),
+            telegramId,
+            commissionRate: FANTASY_COMMISSION_RATE,
+          });
+        } catch (error) {
+          try {
+            await refundArenaEntryUsdcToUser({
+              telegramId,
+              amount: game.entry_fee,
+            });
+          } catch (refundError) {
+            console.error(
+              `[fantasy] CRITICAL: arena join refund failed for user ${telegramId} code ${game.code} amount ${game.entry_fee}:`,
+              refundError
+            );
+            throw new Error(
+              `Arena entry could not be completed, and the on-chain refund back to your in-bot wallet also failed. Contact support with arena code ${game.code}.`
+            );
+          }
+
+          throw error;
+        }
+      } finally {
+        await redis.del(lockKey);
+      }
+    },
+  });
 }
 
 export async function processPendingRefunds(): Promise<void> {

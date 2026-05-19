@@ -165,13 +165,26 @@ function wrapRedisClient(client: Redis): CacheClient {
       key: string,
       value: string,
       mode?: RedisSetMode,
-      durationSeconds?: number
-    ): Promise<"OK"> {
+      durationSeconds?: number,
+      condition?: RedisSetCondition
+    ): Promise<"OK" | null> {
       if (mode === undefined) {
         return client.set(key, value);
       }
 
-      return client.set(key, value, mode, durationSeconds ?? 0);
+      if (condition === undefined) {
+        return client.set(key, value, mode, durationSeconds ?? 0);
+      }
+
+      return (client as Redis & {
+        set(
+          key: string,
+          value: string,
+          mode: RedisSetMode,
+          durationSeconds: number,
+          condition: RedisSetCondition
+        ): Promise<"OK" | null>;
+      }).set(key, value, mode, durationSeconds ?? 0, condition);
     },
     get(key: string): Promise<string | null> {
       return client.get(key);

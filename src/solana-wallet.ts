@@ -42,6 +42,10 @@ import {
   type FantasyWalletLedgerEntry,
   type FantasyWalletWithdrawal,
 } from "./db/wallets.ts";
+import {
+  acquireUserWalletOperationLock,
+  withUserWalletOperationLock,
+} from "./utils/user-wallet-operation-lock.ts";
 
 const SOLANA_COMMITMENT = "confirmed";
 
@@ -80,7 +84,7 @@ function decodeBase64(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64"));
 }
 
-function parseSecretKey(value: string): Uint8Array {
+export function parseSecretKey(value: string): Uint8Array {
   const trimmed = value.trim();
 
   if (!trimmed) {
@@ -131,7 +135,7 @@ function encryptSecretKey(secretKey: Uint8Array): string {
   ].join(".");
 }
 
-function decryptSecretKey(payload: string): Uint8Array {
+export function decryptSecretKey(payload: string): Uint8Array {
   const [version, ivRaw, authTagRaw, ciphertextRaw] = payload.split(".");
 
   if (
@@ -157,6 +161,14 @@ function decryptSecretKey(payload: string): Uint8Array {
   ]);
 
   return new Uint8Array(cleartext);
+}
+
+function loadSecretKeyMaterial(value: string): Uint8Array {
+  const trimmed = value.trim();
+
+  return trimmed.startsWith("v1.")
+    ? decryptSecretKey(trimmed)
+    : parseSecretKey(trimmed);
 }
 
 function isUniqueViolation(error: { code?: string } | null): boolean {
@@ -192,11 +204,15 @@ async function getUsdcDecimals(): Promise<number> {
 function getTreasuryKeypair(): Keypair {
   if (!cachedTreasuryKeypair) {
     cachedTreasuryKeypair = Keypair.fromSecretKey(
-      parseSecretKey(config.SOLANA_TREASURY_SECRET_KEY)
+      loadSecretKeyMaterial(config.SOLANA_TREASURY_SECRET_KEY)
     );
   }
 
   return cachedTreasuryKeypair;
+}
+
+export function getTreasuryAddress(): string {
+  return getTreasuryKeypair().publicKey.toBase58();
 }
 
 function getAssociatedUsdcAddress(owner: PublicKey): PublicKey {
@@ -261,37 +277,6 @@ async function getTokenAccountRawBalance(address: PublicKey): Promise<bigint> {
   }
 }
 
-async function sweepWalletToTreasury(
-  wallet: FantasyWallet,
-  amountRaw: bigint
-): Promise<string | null> {
-  if (amountRaw <= 0n) {
-    return null;
-  }
-
-  const userSigner = toUserKeypair(wallet);
-  const treasury = getTreasuryKeypair();
-  const treasuryAta = await ensureTreasuryUsdcAta();
-  const userAta = new PublicKey(wallet.usdc_ata);
-  const decimals = await getUsdcDecimals();
-
-  const tx = new Transaction().add(
-    createTransferCheckedInstruction(
-      userAta,
-      getUsdcMint(),
-      treasuryAta,
-      userSigner.publicKey,
-      amountRaw,
-      decimals
-    )
-  );
-  tx.feePayer = treasury.publicKey;
-
-  return sendAndConfirmTransaction(getConnection(), tx, [treasury, userSigner], {
-    commitment: SOLANA_COMMITMENT,
-  });
-}
-
 async function transferUserUsdc(input: {
   fromWallet: FantasyWallet;
   destinationAddress: string;
@@ -332,6 +317,18 @@ async function transferUserUsdc(input: {
     signature,
     destinationUsdcAta: destinationAta.toBase58(),
   };
+}
+
+export async function transferFantasyWalletUsdc(input: {
+  wallet: FantasyWallet;
+  destinationAddress: string;
+  amount: number;
+}): Promise<{ signature: string; destinationUsdcAta: string }> {
+  return transferUserUsdc({
+    fromWallet: input.wallet,
+    destinationAddress: input.destinationAddress,
+    amount: input.amount,
+  });
 }
 
 async function transferUserUsdcToTreasury(input: {
@@ -406,6 +403,13 @@ async function ensureUserUsdcAta(wallet: FantasyWallet): Promise<void> {
   await ensureAssociatedTokenAccount(new PublicKey(wallet.owner_address), treasury);
 }
 
+export async function getFantasyWalletOnChainUsdcBalance(input: {
+  wallet: FantasyWallet;
+}): Promise<number> {
+  const rawBalance = await getTokenAccountRawBalance(new PublicKey(input.wallet.usdc_ata));
+  return roundUsdc(rawToUsdc(rawBalance));
+}
+
 export async function ensureFantasyWallet(
   telegramId: number
 ): Promise<FantasyWallet> {
@@ -470,18 +474,24 @@ export async function requestFantasyWalletWithdrawal(input: {
   destinationAddress: string;
   amount: number;
 }): Promise<FantasyWalletWithdrawal> {
-  if (roundUsdc(input.amount) < roundUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)) {
-    throw new Error(
-      `Minimum withdrawal is ${roundUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)} USDC.`
-    );
-  }
-
-  await ensureFantasyWallet(input.telegramId);
-
-  return requestSolanaWithdrawal({
+  return withUserWalletOperationLock({
     telegramId: input.telegramId,
-    destinationAddress: input.destinationAddress,
-    amount: roundUsdc(input.amount),
+    reason: "withdrawal_request",
+    task: async () => {
+      if (roundUsdc(input.amount) < roundUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)) {
+        throw new Error(
+          `Minimum withdrawal is ${roundUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)} USDC.`
+        );
+      }
+
+      await ensureFantasyWallet(input.telegramId);
+
+      return requestSolanaWithdrawal({
+        telegramId: input.telegramId,
+        destinationAddress: input.destinationAddress,
+        amount: roundUsdc(input.amount),
+      });
+    },
   });
 }
 
@@ -543,49 +553,62 @@ export async function processFantasyWalletWithdrawals(): Promise<void> {
     activeWithdrawalIds.add(pendingWithdrawal.id);
 
     try {
-      const claimed = await markFantasyWalletWithdrawalProcessing(
-        pendingWithdrawal.id
-      );
+      const releaseUserLock = await acquireUserWalletOperationLock({
+        telegramId: pendingWithdrawal.telegram_id,
+        reason: `withdrawal_processing:${pendingWithdrawal.id}`,
+      });
 
-      if (!claimed) {
+      if (!releaseUserLock) {
         continue;
       }
 
       try {
-        const wallet = await getFantasyWalletByTelegramId(claimed.telegram_id);
-        if (!wallet) {
-          throw new Error("User wallet not found.");
+        const claimed = await markFantasyWalletWithdrawalProcessing(
+          pendingWithdrawal.id
+        );
+
+        if (!claimed) {
+          continue;
         }
 
-        const transfer = await transferUserUsdc({
-          fromWallet: wallet,
-          destinationAddress: claimed.destination_address,
-          amount: claimed.amount,
-        });
+        try {
+          const wallet = await getFantasyWalletByTelegramId(claimed.telegram_id);
+          if (!wallet) {
+            throw new Error("User wallet not found.");
+          }
 
-        await completeFantasyWalletWithdrawal({
-          withdrawalId: claimed.id,
-          txSignature: transfer.signature,
-          destinationUsdcAta: transfer.destinationUsdcAta,
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown Solana withdrawal error.";
+          const transfer = await transferUserUsdc({
+            fromWallet: wallet,
+            destinationAddress: claimed.destination_address,
+            amount: claimed.amount,
+          });
 
-        await failFantasyWalletWithdrawal({
-          withdrawalId: claimed.id,
-          failureReason: message,
-        });
+          await completeFantasyWalletWithdrawal({
+            withdrawalId: claimed.id,
+            txSignature: transfer.signature,
+            destinationUsdcAta: transfer.destinationUsdcAta,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown Solana withdrawal error.";
 
-        await creditBalance(claimed.telegram_id, claimed.amount, {
-          entryType: "withdrawal_refund",
-          referenceType: "solana_wallet_withdrawal",
-          referenceId: claimed.id,
-          idempotencyKey: `withdrawal_refund:${claimed.id}`,
-          metadata: {
+          await failFantasyWalletWithdrawal({
+            withdrawalId: claimed.id,
             failureReason: message,
-          },
-        });
+          });
+
+          await creditBalance(claimed.telegram_id, claimed.amount, {
+            entryType: "withdrawal_refund",
+            referenceType: "solana_wallet_withdrawal",
+            referenceId: claimed.id,
+            idempotencyKey: `withdrawal_refund:${claimed.id}`,
+            metadata: {
+              failureReason: message,
+            },
+          });
+        }
+      } finally {
+        await releaseUserLock().catch(() => undefined);
       }
     } finally {
       activeWithdrawalIds.delete(pendingWithdrawal.id);

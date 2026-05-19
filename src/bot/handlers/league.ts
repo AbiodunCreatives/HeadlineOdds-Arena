@@ -2038,7 +2038,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     }
 
     try {
-      const order = await createFantasyPajCashOfframp({
+      const result = await createFantasyPajCashOfframp({
         telegramId: ctx.from.id,
         bankId: session.bankId,
         accountNumber: session.accountNumber,
@@ -2046,13 +2046,13 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       });
 
       const resultText = buildOfframpOrderText({
-        orderId: order.order_id,
-        usdcAmount: order.expected_usdc_amount,
-        fiatAmount: order.fiat_amount,
+        orderId: result.order.order_id,
+        usdcAmount: result.order.expected_usdc_amount,
+        fiatAmount: result.order.fiat_amount,
         accountName: session.accountName ?? session.accountNumber,
         accountNumber: session.accountNumber,
         bankName: session.bankName ?? session.bankId,
-        depositAddress: order.recipient_address ?? "",
+        fundingSignature: result.fundingSignature,
       });
 
       await ctx.editMessageText(resultText, { reply_markup: buildWalletKeyboard() }).catch(() =>
@@ -2316,7 +2316,8 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
           `Bank: ${offrampSession.bankName}`,
           `USDC to debit: ${formatUsdc(usdcAmount)}`,
           "",
-          "Your balance will be debited immediately.",
+          "The USDC must already be in your in-bot wallet on-chain.",
+          "The bot will send that USDC directly to PajCash, then debit your in-bot balance.",
         ].join("\n"),
         { reply_markup: buildOfframpConfirmKeyboard() }
       );
@@ -2553,7 +2554,8 @@ function buildOfframpHelpText(): string {
     "Step 2: Confirm the account name.",
     "Step 3: Enter the USDC amount to offramp.",
     "",
-    "Your in-bot balance will be debited immediately.",
+    "The USDC must already be sitting in your in-bot wallet on-chain.",
+    "Your in-bot balance will be debited after the USDC transfer is submitted.",
     "PajCash will send Naira to your bank account.",
   ].join("\n");
 }
@@ -2575,7 +2577,7 @@ function buildOfframpOrderText(input: {
   accountName: string;
   accountNumber: string;
   bankName: string;
-  depositAddress: string;
+  fundingSignature: string;
 }): string {
   return [
     "✅ Offramp order created.",
@@ -2583,6 +2585,9 @@ function buildOfframpOrderText(input: {
     `Order ID: ${input.orderId}`,
     `USDC debited: ${formatUsdc(input.usdcAmount)}`,
     `Naira to receive: ${formatNaira(input.fiatAmount)}`,
+    "",
+    "USDC transfer submitted to PajCash.",
+    `Funding tx: ${input.fundingSignature}`,
     "",
     "Sending to:",
     `${input.accountName}`,
