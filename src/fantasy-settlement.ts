@@ -8,6 +8,7 @@ import {
   settleFantasyLeagueTrades,
 } from "./fantasy-league.ts";
 import { getDelayUntilNextAlignedTick } from "./utils/aligned-interval.ts";
+import { sendAdminAlert } from "./utils/alert.ts";
 
 let fantasySettlementTimer: NodeJS.Timeout | null = null;
 let fantasySettlementRunning = false;
@@ -32,12 +33,14 @@ async function runFantasySettlementTick(): Promise<void> {
           await sendFantasyStartingSoonPings();
         } catch (error) {
           console.error("[fantasy-settlement] Starting-soon pings failed:", error);
+          void sendAdminAlert(`[fantasy-settlement] Starting-soon pings failed: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         try {
           await activateDueFantasyGames();
         } catch (error) {
           console.error("[fantasy-settlement] Activation pass failed:", error);
+          void sendAdminAlert(`[fantasy-settlement] Activation pass failed: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         try {
@@ -45,18 +48,21 @@ async function runFantasySettlementTick(): Promise<void> {
           await sendFantasyRoundReengagements(settledRounds);
         } catch (error) {
           console.error("[fantasy-settlement] Settlement pass failed:", error);
+          void sendAdminAlert(`[fantasy-settlement] Settlement pass failed: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         try {
           await finalizeFantasyGames();
         } catch (error) {
           console.error("[fantasy-settlement] Finalization pass failed:", error);
+          void sendAdminAlert(`[fantasy-settlement] Finalization pass failed: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         try {
           await processPendingRefunds();
         } catch (error) {
           console.error("[fantasy-settlement] Pending refunds pass failed:", error);
+          void sendAdminAlert(`[fantasy-settlement] Pending refunds pass failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       })(),
       timeoutPromise

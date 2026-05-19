@@ -2,6 +2,7 @@ import { getCurrentRoundSnapshot } from "./bayse-market.ts";
 import { config } from "./config.ts";
 import { FANTASY_ASSET, processFantasyLeagueRound } from "./fantasy-league.ts";
 import { getDelayUntilNextAlignedTick } from "./utils/aligned-interval.ts";
+import { sendAdminAlert } from "./utils/alert.ts";
 
 let fantasyMonitorTimer: NodeJS.Timeout | null = null;
 let fantasyMonitorRunning = false;
@@ -41,6 +42,7 @@ async function runFantasyMonitorTick(): Promise<void> {
     ]);
   } catch (error) {
     console.error("[fantasy-monitor] Tick failed:", error);
+    void sendAdminAlert(`[fantasy-monitor] Tick failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     monitorInFlight = false;
   }

@@ -1,4 +1,5 @@
 import { createServer } from "http";
+import { timingSafeEqual } from "crypto";
 
 import express from "express";
 import { Bot, type Context } from "grammy";
@@ -27,6 +28,7 @@ import {
   handleAdminWithdraw,
 } from "./bot/handlers/league.ts";
 import { config } from "./config.ts";
+import { isTesterAllowed } from "./config.ts";
 import { supabase } from "./db/client.ts";
 import { upsertUserProfile } from "./db/users.ts";
 import { startFantasyMonitor, stopFantasyMonitor } from "./fantasy-monitor.ts";
@@ -41,6 +43,7 @@ import {
   stopSolanaWalletMonitor,
 } from "./solana-wallet-monitor.ts";
 import { redis } from "./utils/rateLimit.ts";
+import { sendAdminAlert } from "./utils/alert.ts";
 
 const bot = new Bot(config.BOT_TOKEN);
 const app = express();
@@ -81,6 +84,12 @@ registerBtcChartMenuPage(app);
 
 bot.use(async (ctx, next) => {
   if (ctx.from && !ctx.from.is_bot) {
+    if (!isTesterAllowed(ctx.from.id)) {
+      await ctx.reply(
+        "This bot is currently in private beta. You are not on the access list."
+      ).catch(() => null);
+      return;
+    }
     await upsertUserProfile(ctx.from.id, ctx.from.username).catch((error) => {
       console.warn("[bot] Failed to upsert user profile:", error);
     });
@@ -122,7 +131,7 @@ bot.catch((error) => {
     `[bot] Unhandled error for update ${error.ctx.update.update_id}:`,
     error.error
   );
-
+  void sendAdminAlert(`[bot] Unhandled error for update ${error.ctx.update.update_id}: ${error.error instanceof Error ? error.error.message : String(error.error)}`);
   error.ctx.reply("Something went wrong. Please try again in a moment.").catch(() => null);
 });
 
@@ -172,6 +181,20 @@ function wrap(
   };
 }
 
+function safeEqual(a: string, b: string): boolean {
+  try {
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    if (aBuf.length !== bBuf.length) {
+      timingSafeEqual(aBuf, aBuf);
+      return false;
+    }
+    return timingSafeEqual(aBuf, bBuf);
+  } catch {
+    return false;
+  }
+}
+
 function normalizeAuthHeader(value: string | undefined): string {
   return (value ?? "").trim();
 }
@@ -186,9 +209,9 @@ function matchesHealthCheckToken(
     typeof queryValue === "string" ? queryValue.trim() : "";
 
   return (
-    normalizedHeader === secret ||
-    normalizedHeader === `Bearer ${secret}` ||
-    (config.NODE_ENV !== "production" && normalizedQuery === secret)
+    safeEqual(normalizedHeader, secret) ||
+    safeEqual(normalizedHeader, `Bearer ${secret}`) ||
+    (config.NODE_ENV !== "production" && safeEqual(normalizedQuery, secret))
   );
 }
 
@@ -231,7 +254,7 @@ app.post("/webhook/pajcash/:secret", pajcashWebhookRateLimit, async (req, res) =
     return;
   }
 
-  if (req.params["secret"] !== configuredSecret) {
+  if (!safeEqual(String(req.params["secret"] ?? ""), configuredSecret)) {
     console.warn("[pajcash] Rejected webhook with invalid path secret");
     res.sendStatus(403);
     return;
@@ -247,14 +270,14 @@ app.post("/webhook/pajcash/:secret", pajcashWebhookRateLimit, async (req, res) =
 });
 
 app.post("/webhook/:secret", telegramWebhookRateLimit, async (req, res) => {
-  if (req.params["secret"] !== config.WEBHOOK_PATH_SECRET) {
+  if (!safeEqual(String(req.params["secret"] ?? ""), config.WEBHOOK_PATH_SECRET)) {
     console.warn("[webhook] Rejected request with invalid path secret");
     res.sendStatus(403);
     return;
   }
 
-  const headerSecret = req.header("x-telegram-bot-api-secret-token");
-  if (config.WEBHOOK_SECRET && headerSecret !== config.WEBHOOK_SECRET) {
+  const headerSecret = req.header("x-telegram-bot-api-secret-token") ?? "";
+  if (config.WEBHOOK_SECRET && !safeEqual(headerSecret, config.WEBHOOK_SECRET)) {
     console.warn("[webhook] Rejected request with invalid secret token header");
     res.sendStatus(403);
     return;
@@ -481,12 +504,14 @@ async function main(): Promise<void> {
       }
 
       console.error("[bot] Fatal polling error:", error);
+      void sendAdminAlert(`[bot] Fatal polling error: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     });
 }
 
 main().catch((error) => {
   console.error("[server] Fatal startup error:", error);
+  void sendAdminAlert(`[server] Fatal startup error: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 });
 
