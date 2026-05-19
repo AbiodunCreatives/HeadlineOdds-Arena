@@ -27,7 +27,14 @@ import {
   handleWallet,
   handleAdminWithdraw,
 } from "./bot/handlers/league.ts";
-import { config, isTesterAllowed } from "./config.ts";
+import { config } from "./config.ts";
+
+const _allowlist = new Set(
+  (config.TESTER_ALLOWLIST ?? "").split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
+);
+function isTesterAllowed(id: number): boolean {
+  return _allowlist.size === 0 || _allowlist.has(id);
+}
 import { supabase } from "./db/client.ts";
 import { upsertUserProfile } from "./db/users.ts";
 import { startFantasyMonitor, stopFantasyMonitor } from "./fantasy-monitor.ts";
