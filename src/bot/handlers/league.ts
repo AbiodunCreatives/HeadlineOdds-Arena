@@ -204,11 +204,11 @@ function buildArenaInsufficientBalanceText(
 
 function buildStartWelcomeText(): string {
   return [
-    "🏟 *HeadlineOdds Arena*",
+    "🏟 HeadlineOdds Arena",
     "",
-    "Trade BTC UP/DOWN in 15\\-min rounds\\. Best bankroll wins USDC\\.",
+    "Trade BTC UP/DOWN in 15-min rounds. Best bankroll wins USDC.",
     "",
-    "_Fund your wallet to enter an arena\\._",
+    "Fund your wallet to enter an arena.",
   ].join("\n");
 }
 
@@ -221,14 +221,14 @@ function buildStartWelcomeKeyboard(): InlineKeyboard {
 
 function buildHowItWorksText(): string {
   return [
-    "❓ *How it works*",
+    "❓ How it works",
     "",
-    "1\\. Deposit USDC or fund via Naira bank transfer",
-    "2\\. Join an arena — entry fee $1–$10",
-    "3\\. Each 15\\-min round: pick UP ↑ or DOWN ↓",
-    "4\\. Best bankroll at the end wins the prize pool",
+    "1. Deposit USDC or fund via Naira bank transfer",
+    "2. Join an arena — entry fee $1–$10",
+    "3. Each 15-min round: pick UP ↑ or DOWN ↓",
+    "4. Best bankroll at the end wins the prize pool",
     "",
-    "_Winnings land in your balance\\. Withdraw anytime\\._",
+    "Winnings land in your balance. Withdraw anytime.",
   ].join("\n");
 }
 
@@ -1790,7 +1790,6 @@ export async function handleStart(ctx: Context): Promise<void> {
 
   if (balance <= 0) {
     await ctx.reply(buildStartWelcomeText(), {
-      parse_mode: "MarkdownV2",
       reply_markup: buildStartWelcomeKeyboard(),
     });
     return;
