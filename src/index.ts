@@ -28,13 +28,6 @@ import {
   handleAdminWithdraw,
 } from "./bot/handlers/league.ts";
 import { config } from "./config.ts";
-
-const _allowlist = new Set(
-  (config.TESTER_ALLOWLIST ?? "").split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
-);
-function isTesterAllowed(id: number): boolean {
-  return _allowlist.size === 0 || _allowlist.has(id);
-}
 import { supabase } from "./db/client.ts";
 import { upsertUserProfile } from "./db/users.ts";
 import { startFantasyMonitor, stopFantasyMonitor } from "./fantasy-monitor.ts";
@@ -90,12 +83,6 @@ registerBtcChartMenuPage(app);
 
 bot.use(async (ctx, next) => {
   if (ctx.from && !ctx.from.is_bot) {
-    if (!isTesterAllowed(ctx.from.id)) {
-      await ctx.reply(
-        "This bot is currently in private beta. You are not on the access list."
-      ).catch(() => null);
-      return;
-    }
     await upsertUserProfile(ctx.from.id, ctx.from.username).catch((error) => {
       console.warn("[bot] Failed to upsert user profile:", error);
     });
