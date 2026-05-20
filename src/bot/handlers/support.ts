@@ -132,7 +132,8 @@ export async function handleSupportQuestion(
       abortSignal: AbortSignal.timeout(10_000),
     });
     return text.trim() || FALLBACK;
-  } catch {
+  } catch (error) {
+    console.error("[support] xAI error:", error instanceof Error ? error.message : String(error));
     return FALLBACK;
   }
 }
