@@ -98,7 +98,7 @@ Never make up information that is not in this knowledge base.`;
 const FALLBACK = "I'm having trouble right now. Please try again or contact @bioduncrypt.";
 const RATE_LIMIT_MSG =
   "You've asked a lot of questions! Take a break and try again in an hour. Or contact @bioduncrypt directly.";
-const RATE_LIMIT = 10;
+const RATE_LIMIT = 20;
 const RATE_TTL = 3600;
 
 async function checkSupportRateLimit(telegramId: number): Promise<boolean> {
