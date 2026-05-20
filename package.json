@@ -16,10 +16,12 @@
   },
   "packageManager": "pnpm@10.30.3",
   "dependencies": {
+    "@ai-sdk/xai": "^3.0.91",
     "@napi-rs/canvas": "^0.1.100",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.98.0",
+    "ai": "^6.0.185",
     "chart.js": "^4.5.1",
     "chartjs-node-canvas": "^5.0.0",
     "dotenv": "^17.3.1",

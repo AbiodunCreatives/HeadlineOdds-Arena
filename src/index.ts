@@ -27,6 +27,7 @@ import {
   handleWallet,
   handleAdminWithdraw,
 } from "./bot/handlers/league.ts";
+import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
 import { supabase } from "./db/client.ts";
 import { upsertUserProfile } from "./db/users.ts";
@@ -93,6 +94,17 @@ bot.use(async (ctx, next) => {
 
 bot.command("start", wrap(handleStart));
 bot.command("help", wrap(handleHelp));
+bot.command("ask", wrap(async (ctx) => {
+  if (!ctx.from) return;
+  const question = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
+  if (!question) {
+    await ctx.reply("What would you like to know? Just type your question and I'll answer instantly.");
+    return;
+  }
+  await ctx.api.sendChatAction(ctx.chat?.id ?? ctx.from.id, "typing").catch(() => null);
+  const answer = await handleSupportQuestion(question, ctx.from.id);
+  await ctx.reply(answer);
+}));
 bot.command("chart", wrap(handleChart));
 bot.command("league", wrap(handleLeague));
 bot.command("create", wrap(handleCreate));
@@ -113,6 +125,15 @@ bot.on("message:text", async (ctx, next) => {
   const handled = await handleFantasyTextInput(ctx);
 
   if (handled) {
+    return;
+  }
+
+  // Plain-text messages that aren't commands or handled inputs go to support agent
+  const text = ctx.message?.text ?? "";
+  if (!text.startsWith("/") && ctx.from) {
+    await ctx.api.sendChatAction(ctx.chat.id, "typing");
+    const answer = await handleSupportQuestion(text, ctx.from.id);
+    await ctx.reply(answer);
     return;
   }
 
@@ -153,7 +174,7 @@ function wrap(
 
     const userId = ctx.from?.id;
     if (userId && !(await checkUserRateLimit(userId))) {
-      await ctx.reply("You're sending commands too fast. Please slow down.").catch(() => null);
+      await ctx.reply("⏳ Slow down — you're sending commands too fast. Try again in a moment.").catch(() => null);
       return;
     }
 
@@ -169,7 +190,7 @@ function wrap(
         `[bot] update=${updateId} handler=${handlerName} - failed:`,
         error
       );
-      await ctx.reply("Something went wrong, please try again.").catch(() => null);
+      await ctx.reply("Something went wrong. Please try again.").catch(() => null);
     }
   };
 }

@@ -64,6 +64,7 @@ import {
 } from "../../solana-wallet.ts";
 import { createFantasyPajCashOnramp, getBanks, confirmBankAccount, createFantasyPajCashOfframp, PAJCASH_OFFRAMP_MIN_USDC } from "../../pajcash.ts";
 import { isDevUser } from "../../utils/devOverrides.ts";
+import { handleSupportQuestion } from "./support.ts";
 
 const START_HOW_IT_WORKS = "start:how";
 const START_LOBBY = "start:lobby";
@@ -174,17 +175,17 @@ function formatDateTime(value: string): string {
 
 function buildArenaNotFoundText(): string {
   return [
-    "Arena not found.",
+    "❌ Arena not found.",
     "",
-    "Check the code and try again, or create your own with /league create <entry_fee> <hours>.",
+    "Double-check the code and try again, or tap below to create your own.",
   ].join("\n");
 }
 
 function buildArenaStartedText(): string {
   return [
-    "This arena has already started.",
+    "⏱ This arena has already started — joining is closed.",
     "",
-    "You can create your own with /league create <entry_fee> <hours>.",
+    "Browse open arenas or create a fresh one below.",
   ].join("\n");
 }
 
@@ -193,12 +194,12 @@ function buildArenaInsufficientBalanceText(
   balance: number
 ): string {
   return [
-    "Insufficient USDC balance.",
+    "💸 Not enough USDC.",
     "",
-    `You need ${formatMoney(entryFee)} available for this arena entry.`,
-    `Your wallet balance: ${formatUsdc(balance)}`,
+    `Entry fee:      ${formatMoney(entryFee)}`,
+    `Your balance:   ${formatUsdc(balance)}`,
     "",
-    "Deposit USDC on Solana into your in-bot wallet, then try again.",
+    "Top up your wallet and come back.",
   ].join("\n");
 }
 
@@ -206,36 +207,38 @@ function buildStartWelcomeText(): string {
   return [
     "🏟 HeadlineOdds Arena",
     "",
-    "Trade BTC UP/DOWN in 15-min rounds. Best bankroll wins USDC.",
+    "Predict BTC UP or DOWN every 15 minutes.",
+    "Best bankroll at the end wins the USDC prize pool.",
     "",
-    "Fund your wallet to enter an arena.",
+    "Fund your wallet to get started.",
   ].join("\n");
 }
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("💳 Fund Wallet", START_WALLET)
+    .text("❓ How it works", START_HOW_IT_WORKS)
     .row()
-    .text("❓ How it works", START_HOW_IT_WORKS);
+    .text("🤖 Ask anything", "support:ask");
 }
 
 function buildHowItWorksText(): string {
   return [
-    "❓ How it works",
+    "❓ How HeadlineOdds Arena works",
     "",
-    "1. Deposit USDC or fund via Naira bank transfer",
-    "2. Join an arena — entry fee $1–$10",
-    "3. Each 15-min round: pick UP ↑ or DOWN ↓",
-    "4. Best bankroll at the end wins the prize pool",
+    "1️⃣  Fund your wallet — USDC on Solana or Naira bank transfer",
+    "2️⃣  Join an arena — entry fees from $1 to $10",
+    "3️⃣  Each 15-min round, pick ↑ UP or ↓ DOWN on BTC/USD",
+    "4️⃣  Best virtual bankroll at the end wins the prize pool",
     "",
-    "Winnings land in your balance. Withdraw anytime.",
+    "Winnings land in your in-bot balance instantly.",
+    "Withdraw to any Solana wallet anytime.",
   ].join("\n");
 }
 
 function buildHowItWorksKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🏟 Enter Arena", START_LOBBY)
-    .row()
+    .text("🏟 Browse Arenas", START_LOBBY)
     .text("💳 Wallet", START_WALLET);
 }
 
@@ -260,7 +263,8 @@ function buildStartOnboardingText(input: {
   return [
     `🏟 *HeadlineOdds Arena*`,
     "",
-    `Hey ${name} — pick an arena, trade BTC UP/DOWN, win USDC\\.`,
+    `Welcome back, ${name}\\!`,
+    `Pick an arena, call BTC UP or DOWN, win USDC\\.`,
     "",
     `💳 *Balance:* \`$${balance} USDC\``,
   ].join("\n");
@@ -268,19 +272,22 @@ function buildStartOnboardingText(input: {
 
 function buildStartOnboardingKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🏟 Enter Arena", START_LOBBY)
+    .text("🏟 Browse Arenas", START_LOBBY)
     .row()
     .text("💳 Wallet", START_WALLET)
-    .text("❓ How it works", START_HOW_IT_WORKS);
+    .text("❓ How it works", START_HOW_IT_WORKS)
+    .row()
+    .text("🤖 Ask anything", "support:ask");
 }
 
 function buildCreateArenaPickerText(balance: number): string {
   return [
-    "⚡ New Arena",
+    "⚡ Create an Arena",
     "",
-    "Pick an entry fee:",
+    "Choose an entry fee — everyone who joins pays the same amount.",
+    "The prize pool grows with every new player.",
     "",
-    `Available balance: ${formatUsdc(balance)}`,
+    `Your balance: ${formatUsdc(balance)}`,
   ].join("\n");
 }
 
@@ -292,7 +299,7 @@ function buildCreateArenaPickerKeyboard(telegramId?: number): InlineKeyboard {
   }
 
   if (telegramId && isDevUser(telegramId)) {
-    keyboard.row().text("Custom", ARENA_CREATE_CUSTOM);
+    keyboard.row().text("✏️ Custom fee", ARENA_CREATE_CUSTOM);
   }
 
   keyboard.row().text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY);
@@ -304,16 +311,17 @@ function buildCreateArenaDurationText(input: {
   entryFee: number;
 }): string {
   return [
-    "⚡ New Arena",
+    "⚡ Create an Arena",
     "",
     `Entry fee: ${formatMoney(input.entryFee, {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     })}`,
-    "Pick how long the arena should run:",
-    "4 rounds play every hour.",
     "",
-    `Available balance: ${formatUsdc(input.balance)}`,
+    "How long should the arena run?",
+    "Rounds fire every 15 minutes — 4 rounds per hour.",
+    "",
+    `Your balance: ${formatUsdc(input.balance)}`,
   ].join("\n");
 }
 
@@ -415,47 +423,46 @@ function buildArenaLobbyText(input: {
     cards: typeof input.live,
     state: "LIVE" | "FILLING" | "OPEN"
   ) => {
-    if (cards.length === 0) {
-      return;
-    }
+    if (cards.length === 0) return;
 
     sections.push(title, "");
 
     for (const card of cards) {
       sections.push(
-        "━━━━━━━━━━━━━━━━━━",
-        `${emoji} ${state}  •  ${formatMoney(card.entryFee, {
+        "──────────────────",
+        `${emoji} ${card.code}  ·  ${formatMoney(card.entryFee, {
           minimumFractionDigits: 0,
           maximumFractionDigits: 0,
-        })} entry  •  ${card.memberCount} players`,
-        `Prize pool: ${formatMoney(card.prizePool)}`
+        })} entry  ·  ${card.memberCount} ${card.memberCount === 1 ? "player" : "players"}`,
+        `🏆 Prize pool: ${formatMoney(card.prizePool)}`
       );
 
       if (state === "LIVE") {
-        sections.push(`Ends in: ${card.endsInText}`);
-
+        sections.push(`⏱ Ends in: ${card.endsInText}`);
         if (card.topReturnPct !== null && card.memberCount >= 2) {
-          sections.push(`Top player: ${formatSignedPercent(card.topReturnPct)} 📈`);
+          sections.push(`📈 Top player: ${formatSignedPercent(card.topReturnPct)}`);
         }
       } else if (state === "FILLING" && card.startsInText) {
-        sections.push(`Starts next round (${card.startsInText})`);
+        sections.push(`🕐 Starts in: ${card.startsInText}`);
+      } else if (state === "OPEN") {
+        sections.push(`🟢 Waiting for players`);
       }
     }
 
     sections.push("");
   };
 
-  pushCard("🏟 LIVE ARENAS", "🔴", input.live, "LIVE");
+  pushCard("🔴 LIVE NOW", "🔴", input.live, "LIVE");
 
   if (!input.liveOnly) {
-    pushCard("🟡 FILLING ARENAS", "🟡", input.filling, "FILLING");
-    pushCard("🟢 OPEN ARENAS", "🟢", input.open, "OPEN");
+    pushCard("🟡 FILLING UP", "🟡", input.filling, "FILLING");
+    pushCard("🟢 OPEN TO JOIN", "🟢", input.open, "OPEN");
   }
 
   if (sections.length === 0) {
     return input.liveOnly
-      ? ["No live arenas right now.", "", "Check back soon or create a fresh one."].join("\n")
-      : ["No arenas running right now.", "Be the first to create one."].join("\n");
+      ? ["No live arenas right now.", "", "Check back soon or create a fresh one below."].join("\n")
+      : ["No arenas running right now.", "", "Be the first — create one below."].join("\n");
   }
 
   return sections.join("\n").trim();
@@ -529,29 +536,25 @@ function buildFantasyJoinPreviewText(input: {
 }): string {
   const startsInText =
     input.roundsUntilStart <= 0
-      ? "Starts next round"
-      : `Starts in: ${input.roundsUntilStart} rounds (~${input.roundsUntilStart * 15} min)`;
-  const durationText = `Duration: ${formatDurationHours(
-    input.durationHours
-  )}  •  ${getRoundsForDurationHours(input.durationHours)} rounds`;
+      ? "Starts next BTC round"
+      : `Starts in ~${input.roundsUntilStart * 15} min`;
+  const durationText = `${formatDurationHours(input.durationHours)}  ·  ${getRoundsForDurationHours(input.durationHours)} rounds`;
 
   return [
     `⚡ Arena ${input.code}`,
     "",
-    `Entry: ${formatMoney(input.entryFee)}  •  ${input.playerCount} players`,
-    `Net prize pool: ${formatMoney(input.prizePool)}`,
-    `Your cut if you win 1st: ${formatMoney(input.projectedFirstPrize)}`,
+    `Entry fee:       ${formatMoney(input.entryFee)}`,
+    `Prize pool:      ${formatMoney(input.prizePool)}  (${input.playerCount} ${input.playerCount === 1 ? "player" : "players"})`,
+    `1st place wins:  ${formatMoney(input.projectedFirstPrize)}`,
     "",
-    startsInText,
-    durationText,
+    `Duration:        ${durationText}`,
+    `${startsInText}`,
     input.currentLeaderName && input.currentLeaderReturnPct !== null
-      ? `Current leader: ${input.currentLeaderName}  ${formatSignedPercent(
-          input.currentLeaderReturnPct
-        )}`
-      : `Starts: ${formatDateTime(input.startAt)}`,
+      ? `Current leader:  ${input.currentLeaderName}  ${formatSignedPercent(input.currentLeaderReturnPct)}`
+      : `Starts:          ${formatDateTime(input.startAt)}`,
     "",
-    `Your balance after joining: ${formatMoney(input.afterJoiningBalance)}`,
-    `Current balance: ${formatMoney(input.balance)}`,
+    `Balance after joining:  ${formatMoney(input.afterJoiningBalance)}`,
+    `Current balance:        ${formatMoney(input.balance)}`,
   ].join("\n");
 }
 
@@ -575,17 +578,17 @@ function buildFantasyCreateSuccessText(input: {
   durationHours: number;
 }): string {
   return [
-    "✅ Arena created",
+    "✅ Arena created!",
     "",
-    `Code: ${input.code}`,
-    `Prize pool: ${formatMoney(input.prizePool)} (grows as others join)`,
-    `Your virtual stack: ${formatWholeMoney(input.virtualStack)}`,
-    `Duration: ${formatDurationHours(input.durationHours)}`,
+    `Code:           ${input.code}`,
+    `Prize pool:     ${formatMoney(input.prizePool)}  (grows as others join)`,
+    `Your stack:     ${formatWholeMoney(input.virtualStack)}`,
+    `Duration:       ${formatDurationHours(input.durationHours)}`,
     input.roundsUntilStart <= 0
-      ? "Starts: next BTC round"
-      : `Starts: next BTC round (~${input.roundsUntilStart * 15} min)`,
+      ? "Starts:         Next BTC round"
+      : `Starts:         ~${input.roundsUntilStart * 15} min`,
     "",
-    "I'll ping you when round 1 opens.",
+    "I'll ping you when round 1 opens. Share the invite to fill the pool!",
   ].join("\n");
 }
 
@@ -599,26 +602,29 @@ function buildFantasyJoinSuccessText(input: {
   durationHours: number;
 }): string {
   return [
-    "You're in. 🟢",
+    "🟢 You're in!",
     "",
-    `Arena: ${input.code}`,
-    `Your virtual stack: ${formatWholeMoney(input.virtualBalance)}`,
-    `Prize pool: ${formatMoney(input.prizePool)} (${input.playerCount} players)`,
-    `Duration: ${formatDurationHours(input.durationHours)}`,
+    `Arena:          ${input.code}`,
+    `Your stack:     ${formatWholeMoney(input.virtualBalance)}`,
+    `Prize pool:     ${formatMoney(input.prizePool)}  (${input.playerCount} ${input.playerCount === 1 ? "player" : "players"})`,
+    `Duration:       ${formatDurationHours(input.durationHours)}`,
     "",
     input.roundsUntilStart <= 0
-      ? "Starts in: next BTC round"
-      : `Starts in: ~${input.roundsUntilStart * 15} min`,
+      ? "Starts:         Next BTC round"
+      : `Starts in:      ~${input.roundsUntilStart * 15} min`,
     `Wallet balance: ${formatUsdc(input.playBalance)}`,
+    "",
     "I'll ping you when round 1 opens.",
   ].join("\n");
 }
 
 function buildInsufficientBalanceWithOptionsText(balance: number): string {
   return [
-    "You do not have enough USDC to join this arena.",
+    "💸 Your balance is too low to join an arena.",
     "",
-    `Wallet balance: ${formatUsdc(balance)}`,
+    `Current balance: ${formatUsdc(balance)}`,
+    "",
+    "Top up your wallet to get started.",
   ].join("\n");
 }
 
@@ -638,9 +644,11 @@ function buildAddFundsText(): string {
   return [
     "💵 Add Funds",
     "",
-    "Open /wallet to view your Solana USDC deposit address.",
-    "You can also tap Fund NGN or use /wallet fund-ngn 10000 to top up from a Naira bank transfer via PajCash.",
-    "Deposits credit your in-bot balance and withdrawals pay out to any Solana wallet.",
+    "• Deposit USDC on Solana — use /wallet for your deposit address.",
+    "• Fund via Naira bank transfer — tap Fund NGN below.",
+    "• Deposit from another chain — tap Other Chain below.",
+    "",
+    "Deposits credit your in-bot balance automatically.",
   ].join("\n");
 }
 
@@ -668,37 +676,37 @@ function buildFundsAddedKeyboard(): InlineKeyboard {
 
 function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSummary>>): string {
   const ledgerLines = summary.recentLedger.slice(0, 4).map((entry) => {
-    const sign = entry.direction === "credit" ? "+" : "-";
+    const sign = entry.direction === "credit" ? "+" : "−";
     const label =
       entry.entry_type === "deposit" ? "Deposit"
       : entry.entry_type === "arena_entry" ? "Arena entry"
-      : entry.entry_type === "fantasy_prize" ? "Prize"
+      : entry.entry_type === "fantasy_prize" ? "Prize payout"
       : entry.entry_type === "withdrawal_request" ? "Withdrawal"
       : entry.entry_type.replace(/_/g, " ");
-    return `${sign}${formatUsdc(entry.amount)}  ${label}`;
+    return `  ${sign}${formatUsdc(entry.amount)}  ${label}`;
   });
 
   const withdrawalLines = summary.recentWithdrawals.length === 0
-    ? ["None"]
+    ? ["  None"]
     : summary.recentWithdrawals.slice(0, 3).map((e) =>
-        `${e.status.toUpperCase()}  ${formatUsdc(e.amount)}  →  ${abbreviateAddress(e.destination_address)}`
+        `  ${e.status.toUpperCase()}  ${formatUsdc(e.amount)}  →  ${abbreviateAddress(e.destination_address)}`
       );
 
   const onrampLines = summary.recentOnramps.length === 0
-    ? ["None"]
+    ? ["  None"]
     : summary.recentOnramps.slice(0, 3).map((e) => {
         const amt = e.actual_usdc_amount > 0 ? e.actual_usdc_amount : e.expected_usdc_amount;
-        return `${formatNaira(e.fiat_amount)}  →  ${formatUsdc(amt)}  ${e.status.toUpperCase()}`;
+        return `  ${formatNaira(e.fiat_amount)}  →  ${formatUsdc(amt)}  ${e.status.toUpperCase()}`;
       });
 
   return [
     "💳 Wallet",
     "",
-    `Balance: ${formatUsdc(summary.balance)}`,
+    `Balance:  ${formatUsdc(summary.balance)}`,
     "",
     "Deposit address (Solana USDC):",
-    summary.wallet.owner_address,
-    ...(ledgerLines.length > 0 ? ["", "Recent:", ...ledgerLines] : []),
+    `  ${summary.wallet.owner_address}`,
+    ...(ledgerLines.length > 0 ? ["", "Recent activity:", ...ledgerLines] : []),
     "",
     "Withdrawals:",
     ...withdrawalLines,
@@ -725,14 +733,17 @@ function buildWalletCrossChainHelpText(): string {
   return [
     "🌐 Deposit from Another Chain",
     "",
-    "Send from Bitcoin, Tron, Ethereum, or 70+ chains — arrives as USDC in your wallet.",
+    "Send from Bitcoin, Tron, Ethereum, or 70+ chains.",
+    "Dextopus converts it to USDC and credits your wallet automatically.",
     "",
-    "/wallet deposit-cross <chainId> <tokenAddress> <amount>",
+    "Command:",
+    "  /wallet deposit-cross <chainId> <tokenAddress> <amount>",
     "",
     "Examples:",
-    "• 10 USDT from Tron:",
+    "  10 USDT from Tron:",
     "  /wallet deposit-cross 728126428 TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t 10",
-    "• 5 USDC from Ethereum:",
+    "",
+    "  5 USDC from Ethereum:",
     "  /wallet deposit-cross 1 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 5",
   ].join("\n");
 }
@@ -746,15 +757,15 @@ function buildWalletCrossChainResultText(input: {
 }): string {
   const expiryMinutes = Math.round(input.expiresInSeconds / 60);
   return [
-    "🌐 Cross-Chain Deposit Address",
+    "🌐 Cross-Chain Deposit Ready",
     "",
     `Send your ${input.originSymbol} to:`,
-    input.depositAddress,
+    `  ${input.depositAddress}`,
     "",
-    `Expected credit: ~${formatUsdc(input.expectedUsdcOut)}`,
-    `Expires in: ${expiryMinutes} minutes`,
+    `Expected credit:  ~${formatUsdc(input.expectedUsdcOut)}`,
+    `Expires in:       ${expiryMinutes} minutes`,
     "",
-    "Once your transaction confirms, Dextopus converts it and USDC arrives in your in-bot wallet automatically.",
+    "Once your transaction confirms, USDC will appear in your wallet automatically.",
     "Use /wallet to check your balance.",
   ].join("\n");
 }
@@ -763,8 +774,8 @@ function buildWalletNairaHelpText(): string {
   return [
     "💵 Fund with Naira",
     "",
-    "Pick an amount — we'll create a bank transfer order via PajCash.",
-    `Min: ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}  •  Max: ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}`,
+    "Pick an amount below — we'll generate a bank transfer order via PajCash.",
+    `Min: ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}  ·  Max: ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}`,
     "",
     "Your balance updates once USDC lands in your wallet.",
   ].join("\n");
@@ -786,7 +797,7 @@ function buildWalletNairaCustomAmountText(): string {
   return [
     "💵 Custom amount",
     `Type any amount between ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)} and ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}.`,
-    "e.g. 3500 or ₦3,500",
+    "e.g.  3500  or  ₦3,500",
   ].join("\n");
 }
 
@@ -856,10 +867,10 @@ function buildWalletCommandHelpText(): string {
   return [
     "💳 Wallet commands",
     "",
-    "/wallet",
-    "/wallet refresh",
-    "/wallet fund-ngn 10000",
-    "/wallet withdraw 5 SOLANA_ADDRESS",
+    "  /wallet                          — View balance & deposit address",
+    "  /wallet refresh                  — Sync deposits & withdrawals",
+    "  /wallet fund-ngn 10000           — Create a Naira top-up order",
+    "  /wallet withdraw 5 <address>     — Withdraw USDC to Solana",
   ].join("\n");
 }
 
@@ -867,13 +878,13 @@ function buildWalletWithdrawHelpText(): string {
   return [
     "📤 Withdraw USDC",
     "",
-    `Min: ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}`,
+    `Minimum: ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}`,
     "",
-    "Send the command:",
-    "/withdraw <amount> <solana_address>",
+    "Command:",
+    "  /withdraw <amount> <solana_address>",
     "",
     "Example:",
-    "/withdraw 5 YourSolanaAddressHere",
+    "  /withdraw 5 YourSolanaAddressHere",
   ].join("\n");
 }
 
@@ -888,16 +899,16 @@ function buildWalletNairaOrderText(input: {
   return [
     "💰 NGN top-up order ready",
     "",
-    `Send: ${formatNaira(input.fiatAmount)}`,
+    `Send:           ${formatNaira(input.fiatAmount)}`,
     `You'll receive: ~${formatUsdc(input.expectedUsdcAmount)}`,
     "",
-    "Bank transfer to:",
-    `${input.accountName}`,
-    `${input.accountNumber}  •  ${input.bankName}`,
+    "Transfer to:",
+    `  ${input.accountName}`,
+    `  ${input.accountNumber}  ·  ${input.bankName}`,
     "",
-    `Ref: ${input.orderId}`,
+    `Reference: ${input.orderId}`,
     "",
-    "Balance updates once USDC arrives in your wallet.",
+    "Your balance updates automatically once USDC arrives.",
   ].join("\n");
 }
 
@@ -927,10 +938,10 @@ function buildWalletWithdrawalRequestedText(input: {
   return [
     "✅ Withdrawal queued",
     "",
-    `Amount: ${formatUsdc(input.amount)}`,
-    `To: ${abbreviateAddress(input.destinationAddress)}`,
+    `Amount:  ${formatUsdc(input.amount)}`,
+    `To:      ${abbreviateAddress(input.destinationAddress)}`,
     "",
-    "Solana transfer will broadcast shortly.",
+    "The Solana transfer will broadcast shortly.",
   ].join("\n");
 }
 
@@ -942,13 +953,13 @@ function buildCatchUpText(input: {
   requiredReturnMultiple: number;
 }): string {
   return [
-    `${input.leaderName} is ${formatWholeMoney(input.gap)} ahead.`,
+    `📊 ${input.leaderName} is ${formatWholeMoney(input.gap)} ahead of you.`,
     "",
     "To close the gap in one trade:",
-    `- Stake ${formatWholeMoney(input.suggestedStake)} on the next round`,
-    `- You'd need roughly a ${input.requiredReturnMultiple.toFixed(2)}x return`,
+    `  Stake ${formatWholeMoney(input.suggestedStake)} on the next round`,
+    `  You'd need roughly a ${input.requiredReturnMultiple.toFixed(2)}x return`,
     "",
-    "Risky, but doable across 2-3 good rounds.",
+    "High risk — but doable across 2–3 strong rounds.",
   ].join("\n");
 }
 
@@ -1030,21 +1041,21 @@ function buildLeagueHelpText(): string {
   return [
     "🏟 HeadlineOdds Arena — Commands",
     "",
-    "/start — Home screen",
-    "/wallet — Your USDC wallet & deposit address",
-    "/fundngn — Top up via Naira bank transfer",
-    "/offrampngn — Convert USDC back to Naira",
-    "/withdraw <amount> <address> — Withdraw USDC to Solana",
-    "/league — Your arenas",
-    "/create <fee> <hours> — Create arena  e.g. /create 5 12",
-    "/join <code> — Join an arena",
-    "/live <code> — Current round & countdown",
-    "/board <code> — Leaderboard",
-    "/status <code> — Arena details",
-    "/chart — BTC 15m chart",
+    "/start              — Home screen",
+    "/wallet             — Your USDC wallet & deposit address",
+    "/fundngn            — Top up via Naira bank transfer",
+    "/offrampngn         — Convert USDC back to Naira",
+    "/withdraw <amt> <addr>  — Withdraw USDC to Solana",
+    "/league             — Your active arenas",
+    "/create <fee> <hrs> — Create an arena  e.g. /create 5 12",
+    "/join <code>        — Join an arena by code",
+    "/live <code>        — Current round & live market",
+    "/board <code>       — Leaderboard",
+    "/status <code>      — Arena details",
+    "/chart              — BTC 15m chart",
     "",
-    "Entry fees: $1–$10  •  Durations: 3h / 9h / 12h / 24h",
-    "4 rounds per hour  •  8% commission on prize pool",
+    "Entry fees: $1–$10  ·  Durations: 3h / 9h / 12h / 24h",
+    "4 rounds per hour  ·  8% commission on prize pool",
   ].join("\n");
 }
 
@@ -1052,8 +1063,8 @@ function buildChartCommandText(): string {
   return [
     "📊 BTC 15m Chart",
     "",
-    "Use the bot menu button to open the live BTC chart.",
-    "If the menu button is not visible yet, use the button below.",
+    "Tap the button below to open the live BTC chart.",
+    "If the menu button isn't visible, use the link below.",
   ].join("\n");
 }
 
@@ -1078,7 +1089,7 @@ async function replyChartCommand(ctx: Context): Promise<void> {
   }
 
   await ctx.reply(
-    "BTC chart menu is not available right now. Set WEBHOOK_URL so the bot can expose the chart page."
+    "BTC chart is not available right now. Set WEBHOOK_URL to enable the chart page."
   );
 }
 
@@ -1136,7 +1147,7 @@ async function replyFantasyCreateError(
   ) {
     await editTradePromptMessage(
       ctx,
-      "No Bayse BTC round is available right now. Try again in a minute."
+      "No BTC round is available right now. Try again in a minute."
     );
     return;
   }
@@ -1144,7 +1155,7 @@ async function replyFantasyCreateError(
   if (normalized.includes("bayse api")) {
     await editTradePromptMessage(
       ctx,
-      "I couldn't reach Bayse right now. Please try again in a moment."
+      "Couldn't reach the market right now. Please try again in a moment."
     );
     return;
   }
@@ -1198,7 +1209,7 @@ async function replyFantasyJoinError(
   }
 
   if (normalized.includes("already joined")) {
-    await ctx.reply("You already joined this arena.");
+    await ctx.reply("You're already in this arena.");
     return;
   }
 
@@ -1231,18 +1242,18 @@ function isWarmRoundCloseError(error: unknown): boolean {
 
 function buildRoundClosedText(): string {
   return [
-    "That round just closed before your trade locked in.",
+    "⏱ That round closed just before your trade locked in.",
     "",
-    "No trade was placed.",
-    "You're still in it. I will send the next BTC prompt shortly.",
+    "No trade was placed — your balance is unchanged.",
+    "The next BTC round prompt is coming shortly.",
   ].join("\n");
 }
 
 function buildTradeAlreadyLockedText(): string {
   return [
-    "That round is already locked in.",
+    "✅ You already have a trade locked in for this round.",
     "",
-    "Watch for the result after the close.",
+    "Sit tight — the result arrives when the round closes.",
   ].join("\n");
 }
 
@@ -1252,15 +1263,15 @@ function formatTradeDirectionLabel(direction: "UP" | "DOWN"): string {
 
 function buildTradeLockedText(result: FantasyTradePlacementResult): string {
   return [
-    `Round ${result.roundNumber} locked in - ${result.game.code}`,
+    `✅ Round ${result.roundNumber} locked in — ${result.game.code}`,
     "",
-    `Direction: ${formatTradeDirectionLabel(result.direction)}`,
-    `Stake: ${formatMoney(result.stake)}`,
-    `Buy price: ${Math.round(result.entryPrice * 100)}c`,
-    `Shares: ${result.shares.toFixed(2)}`,
-    `Virtual balance: ${formatMoney(result.remainingBalance)}`,
+    `Direction:        ${formatTradeDirectionLabel(result.direction)}`,
+    `Stake:            ${formatMoney(result.stake)}`,
+    `Buy price:        ${Math.round(result.entryPrice * 100)}¢`,
+    `Shares:           ${result.shares.toFixed(2)}`,
+    `Virtual balance:  ${formatMoney(result.remainingBalance)}`,
     "",
-    "Nice. I'll send the result after the round closes.",
+    "Result arrives when the round closes. Good luck! 🎯",
   ].join("\n");
 }
 
@@ -1820,6 +1831,11 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     return;
   }
 
+  if (data === "support:ask") {
+    await ctx.reply("What would you like to know? Just type your question and I'll answer instantly.");
+    return;
+  }
+
   if (data === START_WALLET || data === WALLET_OPEN) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     await renderWalletView(ctx, ctx.from.id, { refresh: true });
@@ -1971,7 +1987,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
   if (data === OFFRAMP_CANCEL) {
     await clearOfframpSession(ctx.from.id);
-    await ctx.editMessageText("Offramp cancelled.").catch(() => null);
+    await ctx.editMessageText("Offramp cancelled. No funds were moved.").catch(() => null);
     return;
   }
 
@@ -2001,16 +2017,18 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
       await ctx.editMessageText(
         [
-          `Account: ${accountName}`,
-          `Account number: ${session.accountNumber}`,
-          `Bank: ${confirmation.bank?.name ?? bankName}`,
+          `✅ Account confirmed`,
           "",
-          `Enter USDC amount to offramp (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
+          `Name:    ${accountName}`,
+          `Number:  ${session.accountNumber}`,
+          `Bank:    ${confirmation.bank?.name ?? bankName}`,
+          "",
+          `Enter the USDC amount to convert (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
         ].join("\n"),
         { reply_markup: buildOfframpCancelKeyboard() }
       ).catch(() =>
         ctx.reply(
-          `Account confirmed: ${accountName}\n\nEnter USDC amount (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
+          `✅ Account confirmed: ${accountName}\n\nEnter USDC amount (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
           { reply_markup: buildOfframpCancelKeyboard() }
         )
       );
@@ -2078,8 +2096,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await savePendingCustomArenaFee(ctx.from.id);
     await editTradePromptMessage(
       ctx,
-      "Type your custom entry fee (e.g. 0.20):",
-      new InlineKeyboard().text("Cancel", ARENA_CREATE)
+      "✏️ Enter your custom entry fee (e.g. 0.20):",
+      new InlineKeyboard().text("← Back", ARENA_CREATE)
     );
     return;
   }
@@ -2183,7 +2201,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
   if (data.startsWith(ARENA_REMIND_PREFIX)) {
     const code = data.slice(ARENA_REMIND_PREFIX.length);
     const confirmMsg = await ctx.reply(
-      "Locked in. I'll nudge you when the next round opens."
+      "🔔 Done! I'll ping you when the next round opens."
     ).catch(() => null);
     const saved = await saveFantasyNextRoundReminder(
       ctx.from.id,
@@ -2194,7 +2212,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       if (confirmMsg) {
         await ctx.api.deleteMessage(ctx.chat!.id, confirmMsg.message_id).catch(() => undefined);
       }
-      await ctx.reply("I couldn't set a reminder for that arena.");
+      await ctx.reply("Couldn't set a reminder for that arena. Try again.");
     }
     return;
   }
@@ -2214,7 +2232,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
   if (await hasPendingCustomArenaFee(ctx.from.id)) {
     const fee = Number.parseFloat(messageText.replace(/[^0-9.]/g, ""));
     if (!Number.isFinite(fee) || fee <= 0) {
-      await ctx.reply("Enter a valid amount, e.g. 0.20");
+      await ctx.reply("Enter a valid fee, e.g. 0.20");
       return true;
     }
     await clearPendingCustomArenaFee(ctx.from.id);
@@ -2245,7 +2263,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
         const banks = await getBanks();
 
         if (banks.length === 0) {
-          await ctx.reply("No banks available right now. Please try again later.", {
+          await ctx.reply("No banks available right now. Please try again in a moment.", {
             reply_markup: buildOfframpCancelKeyboard(),
           });
           return true;
@@ -2297,7 +2315,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
       if (balance < usdcAmount) {
         await ctx.reply(
-          `Insufficient balance. Available: ${formatUsdc(balance)}`,
+          `💸 Insufficient balance.\n\nAvailable: ${formatUsdc(balance)}`,
           { reply_markup: buildOfframpCancelKeyboard() }
         );
         return true;
@@ -2311,15 +2329,14 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
       await ctx.reply(
         [
-          "Confirm offramp:",
+          "⚠️ Confirm offramp",
           "",
-          `Account: ${offrampSession.accountName}`,
-          `Account number: ${offrampSession.accountNumber}`,
-          `Bank: ${offrampSession.bankName}`,
-          `USDC to debit: ${formatUsdc(usdcAmount)}`,
+          `Account:       ${offrampSession.accountName}`,
+          `Number:        ${offrampSession.accountNumber}`,
+          `Bank:          ${offrampSession.bankName}`,
+          `USDC to send:  ${formatUsdc(usdcAmount)}`,
           "",
-          "The USDC must already be in your in-bot wallet on-chain.",
-          "The bot will send that USDC directly to PajCash, then debit your in-bot balance.",
+          "The USDC will be sent on-chain to PajCash, then your in-bot balance is debited.",
         ].join("\n"),
         { reply_markup: buildOfframpConfirmKeyboard() }
       );
@@ -2393,7 +2410,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
     }
 
     if (!isValidSolanaAddress(destinationAddress)) {
-      await ctx.reply("That Solana address looks invalid. Please check it and try again.");
+      await ctx.reply("That Solana address doesn't look right. Please double-check and try again.");
       return;
     }
 
@@ -2405,18 +2422,12 @@ export async function handleWallet(ctx: Context): Promise<void> {
       });
       await processFantasyWalletWithdrawals();
       await ctx.reply(
-        buildWalletWithdrawalRequestedText({
-          amount,
-          destinationAddress,
-        }),
-        {
-          reply_markup: buildWalletKeyboard(),
-        }
+        buildWalletWithdrawalRequestedText({ amount, destinationAddress }),
+        { reply_markup: buildWalletKeyboard() }
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
       const normalized = message.toLowerCase();
-
       if (normalized.includes("insufficient wallet balance")) {
         const balance = await getBalance(ctx.from.id);
         await ctx.reply(buildArenaInsufficientBalanceText(amount, balance), {
@@ -2424,7 +2435,6 @@ export async function handleWallet(ctx: Context): Promise<void> {
         });
         return;
       }
-
       await ctx.reply(message);
     }
 
@@ -2464,7 +2474,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
-      await ctx.reply(`Cross-chain deposit failed: ${message}`, {
+      await ctx.reply(`❌ Cross-chain deposit failed: ${message}`, {
         reply_markup: buildWalletKeyboard(),
       });
     }
@@ -2506,7 +2516,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
-      await ctx.reply(`Cross-chain deposit failed: ${message}`, { reply_markup: buildWalletKeyboard() });
+      await ctx.reply(`❌ Cross-chain deposit failed: ${message}`, { reply_markup: buildWalletKeyboard() });
     }
 
     return;
@@ -2552,13 +2562,13 @@ function buildOfframpHelpText(): string {
     "",
     `Minimum: ${PAJCASH_OFFRAMP_MIN_USDC} USDC`,
     "",
-    "Step 1: Enter your Nigerian bank account number.",
-    "Step 2: Confirm the account name.",
-    "Step 3: Enter the USDC amount to offramp.",
+    "Step 1 — Enter your Nigerian bank account number.",
+    "Step 2 — Confirm the account name.",
+    "Step 3 — Enter the USDC amount to convert.",
     "",
-    "The USDC must already be sitting in your in-bot wallet on-chain.",
-    "Your in-bot balance will be debited after the USDC transfer is submitted.",
-    "PajCash will send Naira to your bank account.",
+    "The USDC must be in your in-bot wallet on-chain.",
+    "Your balance is debited after the transfer is submitted.",
+    "PajCash sends Naira directly to your bank account.",
   ].join("\n");
 }
 
@@ -2587,9 +2597,9 @@ function buildOfframpOrderText(input: {
     `${formatNairaCompact(input.fiatAmount)} is on its way to your bank.`,
     "",
     `🏦 ${input.accountName}`,
-    `${input.accountNumber} · ${input.bankName}`,
+    `   ${input.accountNumber}  ·  ${input.bankName}`,
     "",
-    `Ref: ${input.orderId}`,
+    `Reference: ${input.orderId}`,
   ].join("\n");
 }
 
@@ -2606,8 +2616,10 @@ export async function handleOfframpNgn(ctx: Context): Promise<void> {
   if (balance < PAJCASH_OFFRAMP_MIN_USDC) {
     await ctx.reply(
       [
-        `Insufficient balance. You need at least ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)} to offramp.`,
-        `Your balance: ${formatUsdc(balance)}`,
+        `💸 Not enough USDC to offramp.`,
+        "",
+        `Minimum:         ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}`,
+        `Your balance:    ${formatUsdc(balance)}`,
       ].join("\n"),
       { reply_markup: buildWalletKeyboard() }
     );
@@ -2619,7 +2631,7 @@ export async function handleOfframpNgn(ctx: Context): Promise<void> {
     [
       buildOfframpHelpText(),
       "",
-      "Enter your bank account number:",
+      "Enter your Nigerian bank account number:",
     ].join("\n"),
     { reply_markup: buildOfframpCancelKeyboard() }
   );
@@ -2671,7 +2683,7 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
   }
 
   if (!isValidSolanaAddress(destinationAddress)) {
-    await ctx.reply("That Solana address looks invalid. Please check it and try again.");
+    await ctx.reply("That Solana address doesn't look right. Please double-check and try again.");
     return;
   }
 
@@ -2708,6 +2720,20 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
 }
 
 export async function handleHelp(ctx: Context): Promise<void> {
+  if (!ctx.from) {
+    await ctx.reply(buildLeagueHelpText());
+    return;
+  }
+
+  const question = (ctx.message?.text ?? "").split(/\s+/).slice(1).join(" ").trim();
+
+  if (question) {
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing").catch(() => null);
+    const answer = await handleSupportQuestion(question, ctx.from.id);
+    await ctx.reply(answer);
+    return;
+  }
+
   await ctx.reply(buildLeagueHelpText(), {
     ...(buildChartCommandKeyboard()
       ? { reply_markup: buildChartCommandKeyboard() }
@@ -2823,7 +2849,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     const code = args[1]?.trim().toUpperCase();
 
     if (!code) {
-      await ctx.reply("Usage: /league join ABC123");
+      await ctx.reply("Please provide an arena code. Example: /league join ABC123");
       return;
     }
 
@@ -2840,7 +2866,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     const code = await resolveArenaLiveCode(ctx.from.id, args[1]);
 
     if (!code) {
-      await ctx.reply("Usage: /league live ABC123");
+      await ctx.reply("Please provide an arena code. Example: /league live ABC123");
       return;
     }
 
@@ -2875,7 +2901,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     const code = args[1]?.trim().toUpperCase();
 
     if (!code) {
-      await ctx.reply("Usage: /league board ABC123");
+      await ctx.reply("Please provide an arena code. Example: /league board ABC123");
       return;
     }
 
@@ -2898,7 +2924,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     const code = args[1]?.trim().toUpperCase();
 
     if (!code) {
-      await ctx.reply("Usage: /league status ABC123");
+      await ctx.reply("Please provide an arena code. Example: /league status ABC123");
       return;
     }
 
@@ -3040,7 +3066,7 @@ export async function handleFantasyJoinConfirm(ctx: Context): Promise<void> {
   const code = await loadPendingFantasyLeagueJoin(ctx.from.id);
 
   if (!code) {
-    await ctx.reply("This invitation expired. Please use /league join CODE again.");
+    await ctx.reply("This invitation has expired. Use /league join CODE to try again.");
     return;
   }
 
@@ -3080,13 +3106,13 @@ export async function handleFantasyJoinDecline(ctx: Context): Promise<void> {
   const code = await loadPendingFantasyLeagueJoin(ctx.from.id);
 
   if (!code) {
-    await ctx.reply("This invitation expired. Please use /league join CODE again.");
+    await ctx.reply("This invitation has expired. Use /league join CODE to try again.");
     return;
   }
 
   await clearPendingFantasyLeagueJoin(ctx.from.id);
   await ctx.reply(
-    `No problem. You can join anytime before the league starts with /league join ${code}`
+    `No problem. You can join anytime before the arena starts with /league join ${code}.`
   );
 }
 
@@ -3094,7 +3120,7 @@ export async function handleFantasyJoinDecline(ctx: Context): Promise<void> {
 export async function handleAdminWithdraw(ctx: Context): Promise<void> {
   if (!ctx.from) return
   if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
-    await ctx.reply("Unauthorized.")
+    await ctx.reply("⛔ Unauthorized.")
     return
   }
   const args = (ctx.message?.text ?? "").split(/\s+/).slice(1)
@@ -3106,8 +3132,8 @@ export async function handleAdminWithdraw(ctx: Context): Promise<void> {
   }
   try {
     const result = await transferTreasuryUsdc({ destinationAddress: destination, amount })
-    await ctx.reply(`Sent $${amount} USDC to ${destination}\nSignature: ${result.signature}`)
+    await ctx.reply(`✅ Sent $${amount} USDC to ${destination}\nSignature: ${result.signature}`)
   } catch (error) {
-    await ctx.reply(`Transfer failed: ${error instanceof Error ? error.message : String(error)}`)
+    await ctx.reply(`❌ Transfer failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
