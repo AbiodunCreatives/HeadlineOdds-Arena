@@ -455,7 +455,7 @@ export async function getFantasyWalletSummary(
   const wallet = await ensureFantasyWallet(telegramId);
   const [balance, recentLedger, recentWithdrawals, recentOnramps] = await Promise.all([
     getBalance(telegramId),
-    listFantasyWalletLedger(telegramId, 6),
+    listFantasyWalletLedger(telegramId, 20),
     listRecentFantasyWalletWithdrawals(telegramId, 4),
     listRecentPajCashOnramps(telegramId, 3),
   ]);

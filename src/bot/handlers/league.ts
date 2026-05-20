@@ -675,16 +675,20 @@ function buildFundsAddedKeyboard(): InlineKeyboard {
 }
 
 function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSummary>>): string {
-  const ledgerLines = summary.recentLedger.slice(0, 4).map((entry) => {
-    const sign = entry.direction === "credit" ? "+" : "−";
-    const label =
-      entry.entry_type === "deposit" ? "Deposit"
-      : entry.entry_type === "arena_entry" ? "Arena entry"
-      : entry.entry_type === "fantasy_prize" ? "Prize payout"
-      : entry.entry_type === "withdrawal_request" ? "Withdrawal"
-      : entry.entry_type.replace(/_/g, " ");
-    return `  ${sign}${formatUsdc(entry.amount)}  ${label}`;
-  });
+  const VISIBLE_ENTRY_TYPES = new Set(["deposit", "arena_entry", "fantasy_entry", "fantasy_prize", "withdrawal_request"]);
+  const ledgerLines = summary.recentLedger
+    .filter((e) => VISIBLE_ENTRY_TYPES.has(e.entry_type))
+    .slice(0, 4)
+    .map((entry) => {
+      const sign = entry.direction === "credit" ? "+" : "−";
+      const label =
+        entry.entry_type === "deposit" ? "Deposit"
+        : entry.entry_type === "arena_entry" || entry.entry_type === "fantasy_entry" ? "Arena entry"
+        : entry.entry_type === "fantasy_prize" ? "Prize payout"
+        : entry.entry_type === "withdrawal_request" ? "Withdrawal"
+        : entry.entry_type.replace(/_/g, " ");
+      return `  ${sign}${formatUsdc(entry.amount)}  ${label}`;
+    });
 
   const withdrawalLines = summary.recentWithdrawals.length === 0
     ? ["  None"]
