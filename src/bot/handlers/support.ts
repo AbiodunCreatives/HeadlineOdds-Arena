@@ -96,8 +96,7 @@ Never promise specific returns or guarantee winnings.
 Never make up information that is not in this knowledge base.`;
 
 const FALLBACK = "I'm having trouble right now. Please try again or contact @bioduncrypt.";
-const RATE_LIMIT_MSG =
-  "You've asked a lot of questions! Take a break and try again in an hour. Or contact @bioduncrypt directly.";
+const RATE_LIMIT_MSG = "You're on a roll! 😄 Take a short break and come back in an hour, or reach @bioduncrypt directly.";
 const RATE_LIMIT = 20;
 const RATE_TTL = 3600;
 

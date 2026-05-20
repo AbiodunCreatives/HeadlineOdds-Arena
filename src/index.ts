@@ -103,7 +103,10 @@ bot.command("ask", wrap(async (ctx) => {
   }
   await ctx.api.sendChatAction(ctx.chat?.id ?? ctx.from.id, "typing").catch(() => null);
   const answer = await handleSupportQuestion(question, ctx.from.id);
-  await ctx.reply(answer, { parse_mode: "Markdown" });
+  const sent = await ctx.reply(answer, { parse_mode: "Markdown" });
+  setTimeout(() => {
+    ctx.api.deleteMessage(sent.chat.id, sent.message_id).catch(() => null);
+  }, 60_000);
 }));
 bot.command("chart", wrap(handleChart));
 bot.command("league", wrap(handleLeague));
@@ -133,7 +136,10 @@ bot.on("message:text", async (ctx, next) => {
   if (!text.startsWith("/") && ctx.from) {
     await ctx.api.sendChatAction(ctx.chat.id, "typing");
     const answer = await handleSupportQuestion(text, ctx.from.id);
-    await ctx.reply(answer, { parse_mode: "Markdown" });
+    const sent = await ctx.reply(answer, { parse_mode: "Markdown" });
+    setTimeout(() => {
+      ctx.api.deleteMessage(sent.chat.id, sent.message_id).catch(() => null);
+    }, 60_000);
     return;
   }
 
