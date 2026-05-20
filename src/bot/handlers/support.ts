@@ -1,4 +1,4 @@
-import { createXai } from "@ai-sdk/xai";
+import { createGroq } from "@ai-sdk/groq";
 import { generateText } from "ai";
 
 import { redis } from "../../utils/rateLimit.ts";
@@ -119,13 +119,13 @@ export async function handleSupportQuestion(
   const allowed = await checkSupportRateLimit(telegramId);
   if (!allowed) return RATE_LIMIT_MSG;
 
-  const apiKey = process.env["XAI_API_KEY"];
+  const apiKey = process.env["GROQ_API_KEY"];
   if (!apiKey) return FALLBACK;
 
   try {
-    const xai = createXai({ apiKey });
+    const groq = createGroq({ apiKey });
     const { text } = await generateText({
-      model: xai("grok-3-mini"),
+      model: groq("llama-3.3-70b-versatile"),
       system: SYSTEM_PROMPT,
       prompt: question,
       maxOutputTokens: 300,
@@ -133,7 +133,7 @@ export async function handleSupportQuestion(
     });
     return text.trim() || FALLBACK;
   } catch (error) {
-    console.error("[support] xAI error:", error instanceof Error ? error.message : String(error));
+    console.error("[support] Groq error:", error instanceof Error ? error.message : String(error));
     return FALLBACK;
   }
 }

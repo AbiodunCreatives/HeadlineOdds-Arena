@@ -16,6 +16,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "dependencies": {
+    "@ai-sdk/groq": "^3.0.39",
     "@ai-sdk/xai": "^3.0.91",
     "@napi-rs/canvas": "^0.1.100",
     "@solana/spl-token": "^0.4.14",
