@@ -838,6 +838,7 @@ function buildFantasyTradeStakeKeyboard(input: {
   ref: string;
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
+  const dirLabel = input.direction === "UP" ? "⬆ YES" : "⬇ NO";
 
   FANTASY_TRADE_AMOUNTS.forEach((amount, index) => {
     keyboard.text(
@@ -849,6 +850,8 @@ function buildFantasyTradeStakeKeyboard(input: {
       keyboard.row();
     }
   });
+
+  keyboard.row().text(`↩ Change (picked ${dirLabel})`, `flt:reset:r:${input.ref}`);
 
   return keyboard;
 }
@@ -1842,26 +1845,31 @@ function renderRoundSettlementMessage(input: {
 function buildRoundCloseNotificationText(input: {
   roundNumber: number;
   closePrice: number | null;
+  referencePrice: number | null;
   resolvedDirection: FantasyTradeDirection;
   trade: FantasyTrade | null;
   virtualBalance: number;
   rank: number;
   totalParticipants: number;
 }): string {
+  const targetStr = formatLiveRoundPromptBtcPrice(input.referencePrice);
+  const closeStr = formatLiveRoundPromptBtcPrice(input.closePrice);
+  const directionLine = input.resolvedDirection === "UP"
+    ? `BTC closed above ${targetStr} at ${closeStr} ✅`
+    : `BTC closed below ${targetStr} at ${closeStr} ❌`;
+
   const tradeLine =
     input.trade === null
-      ? "No trade placed this round."
+      ? "You didn't trade this round."
       : input.trade.outcome === "WIN"
-        ? `Your trade: ${input.trade.direction} won.`
-        : `Your trade: ${input.trade.direction} lost.`;
+        ? `Your call: ${input.trade.direction} ✓  +${formatMoney(input.trade.payout - input.trade.stake)} profit`
+        : `Your call: ${input.trade.direction} ✗`;
 
   return [
-    `Round ${input.roundNumber} closed. BTC finished at ${formatLiveRoundPromptBtcPrice(
-      input.closePrice
-    )} — ${input.resolvedDirection} wins.`,
+    `Round ${input.roundNumber} closed.`,
+    directionLine,
     tradeLine,
-    `Your balance: ${formatWholeMoney(input.virtualBalance)} virtual USDC`,
-    `Current rank: ${input.rank} of ${input.totalParticipants}`,
+    `Balance: ${formatWholeMoney(input.virtualBalance)}  ·  Rank #${input.rank} of ${input.totalParticipants}`,
   ].join("\n");
 }
 
@@ -2043,6 +2051,31 @@ export function clearFantasyTradePromptState(
   }
 
   clearPromptState(promptState.key);
+}
+
+export function resetFantasyTradePromptToDirection(
+  ref: string,
+  chatId?: number,
+  messageId?: number
+): { text: string; keyboard: InlineKeyboard } | null {
+  const promptState = getPromptStateFromMessage(chatId, messageId);
+
+  if (promptState) {
+    promptState.state.stage = "direction";
+    promptState.state.selectedDirection = null;
+    promptState.state.selectedStake = null;
+    schedulePromptCountdown(promptState.state);
+    return {
+      text: buildLiveRoundPromptText(promptState.state),
+      keyboard: buildRoundPromptKeyboard(promptState.state),
+    };
+  }
+
+  // Fallback: no live prompt state, just show direction buttons
+  return {
+    text: "Pick your direction:",
+    keyboard: buildFantasyTradeBuyKeyboard({ ref, upPrice: 0.5, downPrice: 0.5 }),
+  };
 }
 
 export async function createFantasyLeagueGame(
@@ -2787,6 +2820,8 @@ export async function settleFantasyLeagueTrades(): Promise<FantasyRoundSettlemen
         eventWindow.openingDate ?? trade.created_at
       );
       const closePrice = await getRoundClosePrice(eventWindow.closingDate);
+      const refPayload = await loadFantasyTradeReference(trade.event_id).catch(() => null);
+      const referencePrice = refPayload?.referencePrice ?? null;
       const tradesByMemberId = new Map(
         allTradesForRound.map((entry) => [entry.member_id, entry] as const)
       );
@@ -2829,13 +2864,19 @@ export async function settleFantasyLeagueTrades(): Promise<FantasyRoundSettlemen
             buildRoundCloseNotificationText({
               roundNumber,
               closePrice,
+              referencePrice,
               resolvedDirection,
               trade: tradeForMember,
               virtualBalance: member.virtual_balance,
               rank,
               totalParticipants: refreshedLeaderboard.length,
             }),
-            new InlineKeyboard().text("View leaderboard", `arena:board:${game.code}`)
+            tradeForMember?.outcome === "WIN"
+              ? new InlineKeyboard()
+                  .text("🏆 Leaderboard", `arena:board:${game.code}`)
+                  .text("🏟 Lobby", "lobby")
+              : new InlineKeyboard()
+                  .text("🏆 Leaderboard", `arena:board:${game.code}`)
           );
         })
       );

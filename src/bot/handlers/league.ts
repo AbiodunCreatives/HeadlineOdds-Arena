@@ -10,8 +10,8 @@ import {
   buildFantasyTradeStakeSelection,
   clearPendingFantasyCustomFundAmount,
   clearFantasyTradePromptState,
-  clearPendingFantasyLeagueJoin,
-  createFantasyLeagueGame,
+  resetFantasyTradePromptToDirection,
+  clearPendingFantasyLeagueJoin,  createFantasyLeagueGame,
   getFantasyLeagueStatusView,
   getFantasyLeagueBoardText,
   hasPendingFantasyCustomFundAmount,
@@ -330,7 +330,7 @@ function buildCreateArenaDurationKeyboard(entryFee: number): InlineKeyboard {
 
   ARENA_DURATION_HOURS_OPTIONS.forEach((hours, index) => {
     keyboard.text(
-      `${formatDurationHours(hours)} (${getRoundsForDurationHours(hours)}r)`,
+      formatDurationHours(hours),
       `${ARENA_DURATION_PREFIX}${entryFee}:${hours}`
     );
 
@@ -429,7 +429,6 @@ function buildArenaLobbyText(input: {
 
     for (const card of cards) {
       sections.push(
-        "──────────────────",
         `${emoji} ${card.code}  ·  ${formatMoney(card.entryFee, {
           minimumFractionDigits: 0,
           maximumFractionDigits: 0,
@@ -554,14 +553,13 @@ function buildFantasyJoinPreviewText(input: {
       : `Starts:          ${formatDateTime(input.startAt)}`,
     "",
     `Balance after joining:  ${formatMoney(input.afterJoiningBalance)}`,
-    `Current balance:        ${formatMoney(input.balance)}`,
   ].join("\n");
 }
 
 function buildFantasyJoinPreviewKeyboard(entryFee: number): InlineKeyboard {
   return new InlineKeyboard()
     .text(
-      `✅ Join - ${formatMoney(entryFee, {
+      `✅ Confirm — Pay ${formatMoney(entryFee, {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0,
       })}`,
@@ -630,8 +628,8 @@ function buildInsufficientBalanceWithOptionsText(balance: number): string {
 
 function buildInsufficientBalanceKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💳 Open wallet", WALLET_OPEN)
-    .text("🔴 Watch live arena", LOBBY_LIVE);
+    .text("💵 Top up now", WALLET_NAIRA_HELP)
+    .text("💳 Open wallet", WALLET_OPEN);
 }
 
 function buildCreateInsufficientKeyboard(): InlineKeyboard {
@@ -989,7 +987,7 @@ function buildArenaLiveKeyboard(input: {
   keyboard.text("📊 Leaderboard", `arena:board:${input.code}`);
 
   if (input.canCatchUp) {
-    keyboard.row().text("⬆ How to catch #1", `${ARENA_CATCH_UP_PREFIX}${input.code}`);
+    keyboard.row().text("📊 What I need to win", `${ARENA_CATCH_UP_PREFIX}${input.code}`);
   }
 
   keyboard
@@ -1008,7 +1006,7 @@ function buildArenaBoardKeyboard(input: {
   keyboard.text("⚡ Live market", `${ARENA_LIVE_PREFIX}${input.code}`).row();
 
   if (input.canCatchUp) {
-    keyboard.text("⬆ How to catch #1", `${ARENA_CATCH_UP_PREFIX}${input.code}`);
+    keyboard.text("📊 What I need to win", `${ARENA_CATCH_UP_PREFIX}${input.code}`);
   }
 
   keyboard
@@ -1266,17 +1264,24 @@ function formatTradeDirectionLabel(direction: "UP" | "DOWN"): string {
 }
 
 function buildTradeLockedText(result: FantasyTradePlacementResult): string {
+  const profit = roundMoney(result.shares - result.stake);
+  const profitLabel = profit >= 0 ? `+${formatMoney(profit)}` : formatMoney(profit);
   return [
-    `✅ Round ${result.roundNumber} locked in — ${result.game.code}`,
+    `✅ Round ${result.roundNumber} locked · ${result.game.code}`,
     "",
-    `Direction:        ${formatTradeDirectionLabel(result.direction)}`,
+    `Direction:        ${result.direction === "UP" ? "⬆ YES" : "⬇ NO"}`,
     `Stake:            ${formatMoney(result.stake)}`,
-    `Buy price:        ${Math.round(result.entryPrice * 100)}¢`,
-    `Shares:           ${result.shares.toFixed(2)}`,
-    `Virtual balance:  ${formatMoney(result.remainingBalance)}`,
+    `If correct:       ${profitLabel} profit`,
+    `Balance:          ${formatMoney(result.remainingBalance)}`,
     "",
     "Result arrives when the round closes. Good luck! 🎯",
   ].join("\n");
+}
+
+function buildTradeLockedKeyboard(code: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🏆 Leaderboard", `arena:board:${code}`)
+    .text("🏟 Lobby", ARENA_BACK_TO_LOBBY);
 }
 
 async function editTradePromptMessage(
@@ -2996,6 +3001,15 @@ export async function handleFantasyLeagueTrade(ctx: Context): Promise<void> {
   const callbackData = ctx.callbackQuery.data;
   const { chatId, messageId } = getPromptMessageRef(ctx);
 
+  if (callbackData.startsWith("flt:reset:r:")) {
+    const ref = callbackData.slice("flt:reset:r:".length);
+    const reset = resetFantasyTradePromptToDirection(ref, chatId, messageId);
+    if (reset) {
+      await editTradePromptMessage(ctx, reset.text, reset.keyboard);
+    }
+    return;
+  }
+
   if (callbackData.startsWith("flt:b:")) {
     try {
       const directionSelection = await buildFantasyTradeStakeSelection({
@@ -3036,7 +3050,7 @@ export async function handleFantasyLeagueTrade(ctx: Context): Promise<void> {
     });
 
     clearFantasyTradePromptState(chatId, messageId);
-    await editTradePromptMessage(ctx, buildTradeLockedText(result));
+    await editTradePromptMessage(ctx, buildTradeLockedText(result), buildTradeLockedKeyboard(result.game.code));
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const normalized = message.toLowerCase();

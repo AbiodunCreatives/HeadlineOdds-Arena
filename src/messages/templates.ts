@@ -169,6 +169,16 @@ export function liveStatusMessage(p: LiveStatusParams): BotMessage {
     ? Math.round((p.accuracy.correct / p.accuracy.total) * 100)
     : 0
 
+  const prizeLine = p.prizeIfEndsNow > 0
+    ? `Prize if ended now:  \`${escapeMarkdown(usd(p.prizeIfEndsNow))}\``
+    : (() => {
+        const prizeLeader = p.leaderboard.find(e => !e.isYou)
+        const gap = prizeLeader ? Math.max(0, prizeLeader.stack - p.stack) : 0
+        return gap > 0
+          ? `Need \`${escapeMarkdown(usd(gap))}\` more to reach prize position`
+          : `Not in prize position`
+      })()
+
   const text = [
     `⚡ *Arena ${code} · Live*`,
     `\\#${p.rank} of ${p.totalPlayers}  ·  Stack: \`${escapeMarkdown(usd(p.stack))}\` \\(${stackSign}${escapeMarkdown(absPct)}%\\)  ·  ${escapeMarkdown(String(p.arenaMinutesLeft))}m left`,
@@ -176,13 +186,13 @@ export function liveStatusMessage(p: LiveStatusParams): BotMessage {
     `Round ${p.currentRound}  ·  BTC \`$${btcPrice}\``,
     lbBlock,
     SEP,
-    `Prize if ended now:  \`${escapeMarkdown(usd(p.prizeIfEndsNow))}\``,
+    prizeLine,
     `Last round:          ${lastRound}`,
     `Accuracy:            ${p.accuracy.correct}/${p.accuracy.total} \\(${accPct}%\\)`,
   ].join('\n')
 
   const kb = new InlineKeyboard()
-    .text('⬆ How to catch #1', `catch1:${p.code}`)
+    .text('📊 What I need to win', `catch1:${p.code}`)
     .text('📊 Live market', `market:${p.code}`)
     .row()
     .text('🔄 Refresh', `refresh:${p.code}`)
@@ -202,9 +212,9 @@ export function finalResultMessage(p: FinalResultParams): BotMessage {
     return `${medal}  ${bold}   \`${escapeMarkdown(usd(e.stack))}\`   \`${escapeMarkdown(pct(e.changePct))}\``
   })
 
-  const payoutLine = p.userPayout != null
+  const payoutLine = p.userPayout != null && p.userPayout > 0
     ? `Your payout:     \`${escapeMarkdown(usd(p.userPayout))}\` USDC  🎉`
-    : `Your payout:     — No payout this time`
+    : `Your payout:     — Better luck next arena\\.`
 
   const text = [
     `🏁 *Arena ${code} — Final Results*`,
@@ -216,9 +226,17 @@ export function finalResultMessage(p: FinalResultParams): BotMessage {
     payoutLine,
   ].join('\n')
 
+  const isWinner = p.userPayout != null && p.userPayout > 0
   const kb = new InlineKeyboard()
-    .text('🏟 Play again', 'lobby')
-    .text('📤 Share result', `share_result:${p.code}`)
+
+  if (isWinner) {
+    kb.text('📤 Share your win', `share_result:${p.code}`)
+      .row()
+      .text('🏟 Play again', 'lobby')
+  } else {
+    kb.text('🏟 Play again', 'lobby')
+      .text('📤 Share result', `share_result:${p.code}`)
+  }
 
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
