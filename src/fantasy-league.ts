@@ -45,6 +45,7 @@ import {
   syncFantasyPrizeAwards,
   updateFantasyGame,
   updateFantasyMemberRoundTracking,
+  getActiveArenaForUser,
   type FantasyGame,
   type FantasyGameMember,
   type FantasyLeaderboardEntry,
@@ -2183,6 +2184,16 @@ export async function createFantasyLeagueGame(
       const code = await generateUniqueFantasyGameCode();
       await upsertUserProfile(creatorTelegramId);
 
+      // One-arena-at-a-time: non-admin users must finish their current arena first
+      if (!isDevUser(creatorTelegramId) && creatorTelegramId !== config.ADMIN_USER_ID) {
+        const existing = await getActiveArenaForUser(creatorTelegramId);
+        if (existing) {
+          throw new Error(
+            `You're already in arena ${existing.code}. Finish it before creating a new one.`
+          );
+        }
+      }
+
       // Idempotency lock — prevent double-tap double-debit
       const lockKey = `arena:entry:lock:${creatorTelegramId}:${code}`;
       const lockAcquired = await redis.set(lockKey, "1", "EX", 60, "NX");
@@ -2244,6 +2255,16 @@ export async function joinFantasyLeagueGame(
 
       if (!game) {
         throw new Error("Arena not found.");
+      }
+
+      // One-arena-at-a-time: non-admin users must finish their current arena first
+      if (telegramId !== config.ADMIN_USER_ID) {
+        const existing = await getActiveArenaForUser(telegramId);
+        if (existing && existing.code !== game.code) {
+          throw new Error(
+            `You're already in arena ${existing.code}. Finish it before joining a new one.`
+          );
+        }
       }
 
       // Idempotency lock — prevent double-tap double-debit

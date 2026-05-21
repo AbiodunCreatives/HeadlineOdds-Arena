@@ -431,6 +431,26 @@ export async function listDueOpenFantasyGames(
   return (data ?? []).map((row) => normalizeFantasyGame(row as FantasyGameRow));
 }
 
+/** Returns the first open/active arena the user is already in, or null. */
+export async function getActiveArenaForUser(
+  telegramId: number
+): Promise<FantasyGame | null> {
+  const { data, error } = await supabase
+    .from("fantasy_game_members")
+    .select("game_id, fantasy_games!inner(id, status, end_at, code, entry_fee, creator_telegram_id, start_at, virtual_start_balance, commission_rate, prize_pool)")
+    .eq("telegram_id", telegramId)
+    .in("fantasy_games.status", ["open", "active"])
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  const game = (data as Record<string, unknown>)["fantasy_games"];
+  if (!game) return null;
+  return normalizeFantasyGame(game as FantasyGameRow);
+}
+
 export async function listActiveFantasyGames(
   nowIso: string
 ): Promise<FantasyGame[]> {
