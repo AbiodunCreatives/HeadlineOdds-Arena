@@ -818,11 +818,11 @@ function buildFantasyTradeBuyKeyboard(input: {
 }): InlineKeyboard {
   return new InlineKeyboard()
     .text(
-      `Buy YES (${formatRoundPromptPrice(input.upPrice)}c)`,
+      `⬆ YES  ${formatRoundPromptPrice(input.upPrice)}¢`,
       buildFantasyTradeDirectionButtonData("UP", input.ref)
     )
     .text(
-      `Buy NO (${formatRoundPromptPrice(input.downPrice)}c)`,
+      `⬇ NO  ${formatRoundPromptPrice(input.downPrice)}¢`,
       buildFantasyTradeDirectionButtonData("DOWN", input.ref)
     );
 }
@@ -927,7 +927,7 @@ function buildRoundPromptText(state: PromptState): string {
     "━━━━━━━━━━━━━━━━━━",
     `⚡ ROUND ${state.roundNumber}  •  LIVE`,
     "━━━━━━━━━━━━━━━━━━",
-    `📍 BTC target: ${formatRoundPromptBtcTarget(state.referencePrice)}`,
+    `Will BTC be above ${formatRoundPromptBtcTarget(state.referencePrice)} in the next 15 mins?`,
     "",
     `⬆ YES   ${yesChance}%   ${yesPrice}¢   wins ${formatRoundPromptMultiplier(state.upPrice)}×`,
     `⬇ NO    ${noChance}%   ${noPrice}¢   wins ${formatRoundPromptMultiplier(
