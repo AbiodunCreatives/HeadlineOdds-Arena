@@ -1,6 +1,10 @@
 // Dextopus cross-chain deposit API client
-// Base URL: https://swap-api.dextopus.com — no auth required
+// Base URL: https://swap-api.dextopus.com
+// Public endpoints (validate-address) need no auth.
+// Quote/deposit endpoints require DEXTOPUS_API_KEY as x-api-key header.
 // Amounts are always in smallest unit (1 USDC = 1_000_000)
+
+import { config } from "./config.ts";
 
 const BASE_URL = "https://swap-api.dextopus.com";
 
@@ -54,14 +58,22 @@ export interface DextopusValidateResponse {
 
 async function dextopusFetch<T>(
   path: string,
-  options?: RequestInit
+  options?: RequestInit & { auth?: boolean }
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string> ?? {}),
+  };
+
+  if (options?.auth !== false && config.DEXTOPUS_API_KEY) {
+    headers["x-api-key"] = config.DEXTOPUS_API_KEY;
+  }
+
+  const { auth: _auth, ...fetchOptions } = options ?? {};
+
   const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options?.headers ?? {}),
-    },
+    ...fetchOptions,
+    headers,
   });
 
   if (!res.ok) {
@@ -80,7 +92,28 @@ export async function getDextopusTokens(
     supportsStaticAddress !== undefined
       ? `?supportsStaticAddress=${supportsStaticAddress}`
       : "";
-  return dextopusFetch<DextopusToken[]>(`/api/deposit/tokens${qs}`);
+  const envelope = await dextopusFetch<{
+    success: boolean;
+    chains: Array<{
+      chainId: number | string;
+      solverCurrencies: Array<{
+        symbol: string;
+        address: string;
+        decimals: number;
+        supportsStaticAddress?: boolean;
+      }>;
+    }>;
+  }>(`/api/deposit/tokens${qs}`);
+
+  return (envelope.chains ?? []).flatMap((chain) =>
+    (chain.solverCurrencies ?? []).map((t) => ({
+      chainId: chain.chainId,
+      address: t.address,
+      symbol: t.symbol,
+      decimals: t.decimals,
+      supportsStaticAddress: t.supportsStaticAddress,
+    }))
+  );
 }
 
 /** Get destination options for a given origin asset. */
@@ -92,9 +125,26 @@ export async function getDextopusDestinations(params: {
   if (params.originAddress) qs.set("originAddress", params.originAddress);
   if (params.originChainId !== undefined)
     qs.set("originChainId", String(params.originChainId));
-  return dextopusFetch<DextopusToken[]>(
-    `/api/deposit/destinations?${qs.toString()}`
-  );
+
+  const envelope = await dextopusFetch<{
+    success: boolean;
+    destinations: Array<{
+      currency: string;
+      symbol: string;
+      blockchain: string;
+      destinationChainId: number | string;
+      decimals: number;
+      supportsStaticAddress?: boolean;
+    }>;
+  }>(`/api/deposit/destinations?${qs.toString()}`);
+
+  return (envelope.destinations ?? []).map((t) => ({
+    chainId: t.destinationChainId,
+    address: t.currency,
+    symbol: t.symbol,
+    decimals: t.decimals,
+    supportsStaticAddress: t.supportsStaticAddress,
+  }));
 }
 
 /** Validate a recipient address format before creating a deposit request. */

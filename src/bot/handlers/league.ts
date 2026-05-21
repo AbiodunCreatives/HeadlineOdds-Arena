@@ -40,6 +40,10 @@ import {
   savePendingJoinCodeEntry,
   hasPendingJoinCodeEntry,
   clearPendingJoinCodeEntry,
+  saveCrossChainSession,
+  loadCrossChainSession,
+  clearCrossChainSession,
+  type CrossChainSession,
   FANTASY_MIN_ENTRY_FEE,
   type FantasyTradePlacementResult,
   type OfframpSessionState,
@@ -70,6 +74,7 @@ import {
   createCrossChainDeposit,
 } from "../../solana-wallet.ts";
 import { createFantasyPajCashOnramp, getBanks, confirmBankAccount, createFantasyPajCashOfframp, PAJCASH_OFFRAMP_MIN_USDC } from "../../pajcash.ts";
+import { getDextopusTokens, getDextopusDepositStatus } from "../../dextopus.ts";
 import { isDevUser } from "../../utils/devOverrides.ts";
 import { handleSupportQuestion } from "./support.ts";
 
@@ -100,6 +105,11 @@ const WALLET_NAIRA_BACK = "wallet:naira:back";
 const WALLET_WITHDRAW_HELP = "wallet:withdraw";
 const WALLET_BACK = "wallet:back";
 const WALLET_CROSS_CHAIN = "wallet:cross";
+const CC_CHAIN_PREFIX  = "cc:chain:";
+const CC_TOKEN_PREFIX  = "cc:token:";
+const CC_CONFIRM       = "cc:confirm";
+const CC_CANCEL        = "cc:cancel";
+const CC_STATUS_PREFIX = "cc:status:";
 const ARENA_CREATE_CUSTOM = "arena:create:custom";
 const WALLET_NAIRA_MIN_AMOUNT = 1_000;
 const WALLET_NAIRA_MAX_AMOUNT = 20_000;
@@ -778,6 +788,117 @@ function buildWalletCrossChainResultText(input: {
     "Once your transaction confirms, USDC will appear in your wallet automatically.",
     "Use /wallet to check your balance.",
   ].join("\n");
+}
+
+// ── Cross-chain guided flow UI ────────────────────────────────────────────────
+
+function buildCrossChainChainPickerText(): string {
+  return "🌐 Deposit from Another Chain\n\nSelect the chain you're sending from:";
+}
+
+function buildCrossChainChainPickerKeyboard(
+  chains: Array<{ chainId: number | string; name: string }>,
+  page: number
+): InlineKeyboard {
+  const PAGE_SIZE = 8;
+  const start = page * PAGE_SIZE;
+  const slice = chains.slice(start, start + PAGE_SIZE);
+  const kb = new InlineKeyboard();
+  for (let i = 0; i < slice.length; i += 2) {
+    for (const c of slice.slice(i, i + 2)) {
+      const label = String(c.name).slice(0, 20);
+      kb.text(label, `${CC_CHAIN_PREFIX}${c.chainId}:${encodeURIComponent(label)}`);
+    }
+    kb.row();
+  }
+  if (page > 0 || start + PAGE_SIZE < chains.length) {
+    if (page > 0) kb.text("◀ Prev", `cc:chains:page:${page - 1}`);
+    if (start + PAGE_SIZE < chains.length) kb.text("Next ▶", `cc:chains:page:${page + 1}`);
+    kb.row();
+  }
+  kb.text("← Back", WALLET_BACK);
+  return kb;
+}
+
+function buildCrossChainTokenPickerKeyboard(
+  tokens: Array<{ address: string; symbol: string; decimals: number }>,
+  chainId: string,
+  chainName: string
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (let i = 0; i < Math.min(tokens.length, 16); i += 3) {
+    for (const t of tokens.slice(i, i + 3)) {
+      kb.text(t.symbol, `${CC_TOKEN_PREFIX}${chainId}:${t.address}:${t.symbol}:${t.decimals}`);
+    }
+    kb.row();
+  }
+  kb.text("← Back", `cc:chains:page:0`);
+  return kb;
+}
+
+function buildCrossChainAmountPromptKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("❌ Cancel", CC_CANCEL);
+}
+
+function buildCrossChainConfirmText(session: CrossChainSession): string {
+  return [
+    "🌐 Confirm Cross-Chain Deposit",
+    "",
+    `Sending:  ${session.amount} ${session.tokenSymbol}`,
+    `Chain:    ${session.chainName}`,
+    "",
+    "A deposit address will be generated. Send exactly this amount to it.",
+    "USDC arrives in your in-bot wallet automatically after confirmation.",
+  ].join("\n");
+}
+
+function buildCrossChainConfirmKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Get deposit address", CC_CONFIRM)
+    .text("❌ Cancel", CC_CANCEL);
+}
+
+function buildCrossChainDepositAddressText(input: {
+  depositAddress: string;
+  originSymbol: string;
+  expectedUsdcOut: number;
+  expiresInSeconds: number;
+}): string {
+  return [
+    "🌐 Cross-Chain Deposit Address",
+    "",
+    `Send your ${input.originSymbol} to:`,
+    input.depositAddress,
+    "",
+    `Expected credit: ~${formatUsdc(input.expectedUsdcOut)}`,
+    `Expires in: ${Math.round(input.expiresInSeconds / 60)} min`,
+    "",
+    "USDC arrives automatically once your transaction confirms.",
+  ].join("\n");
+}
+
+function buildCrossChainDepositAddressKeyboard(depositRequestId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🔄 Check status", `${CC_STATUS_PREFIX}${depositRequestId}`)
+    .row()
+    .text("💳 Wallet", WALLET_OPEN)
+    .text("🏟 Arenas", WALLET_BACK);
+}
+
+function buildCrossChainStatusText(input: {
+  status: string;
+  executionStatus: string;
+  originTxs: string[];
+  destTxs: string[];
+}): string {
+  const emoji: Record<string, string> = { pending: "⏳", processing: "🔄", completed: "✅", expired: "❌", failed: "❌" };
+  const lines = [
+    `${emoji[input.status.toLowerCase()] ?? "ℹ️"} Status: ${input.status}`,
+    `Execution: ${input.executionStatus}`,
+  ];
+  if (input.originTxs[0]) lines.push(`Origin tx: ${input.originTxs[0]}`);
+  if (input.destTxs[0]) lines.push(`Dest tx: ${input.destTxs[0]}`);
+  return lines.join("\n");
 }
 
 function buildWalletNairaHelpText(): string {
@@ -1915,7 +2036,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
   if (data === FUNDS_CUSTOM) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
-    await editTradePromptMessage(ctx, buildWalletWithdrawHelpText(), buildWalletKeyboard());
+    await renderWalletView(ctx, ctx.from.id, { refresh: true });
     return;
   }
 
@@ -1941,9 +2062,139 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
   if (data === WALLET_CROSS_CHAIN) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
-    await editTradePromptMessage(ctx, buildWalletCrossChainHelpText(), buildWalletKeyboard());
+    await clearCrossChainSession(ctx.from.id);
+    try {
+      const tokens = await getDextopusTokens();
+      const chainMap = new Map<string, { chainId: number | string; name: string }>();
+      for (const t of tokens) {
+        const key = String(t.chainId);
+        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: key });
+      }
+      const chains = Array.from(chainMap.values());
+      await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(chains, 0));
+    } catch {
+      await editTradePromptMessage(ctx, "Failed to load chains. Please try again.", buildWalletKeyboard());
+    }
     return;
   }
+
+  if (data.startsWith("cc:chains:page:")) {
+    const page = parseInt(data.replace("cc:chains:page:", ""), 10) || 0;
+    try {
+      const tokens = await getDextopusTokens();
+      const chainMap = new Map<string, { chainId: number | string; name: string }>();
+      for (const t of tokens) {
+        const key = String(t.chainId);
+        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: key });
+      }
+      await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(Array.from(chainMap.values()), page));
+    } catch {
+      await editTradePromptMessage(ctx, "Failed to load chains. Please try again.", buildWalletKeyboard());
+    }
+    return;
+  }
+
+  if (data.startsWith(CC_CHAIN_PREFIX)) {
+    const parts = data.slice(CC_CHAIN_PREFIX.length).split(":");
+    const chainId = parts[0] ?? "";
+    const chainName = decodeURIComponent(parts[1] ?? chainId);
+    try {
+      const tokens = await getDextopusTokens();
+      const chainTokens = tokens.filter((t) => String(t.chainId) === chainId);
+      if (chainTokens.length === 0) {
+        await editTradePromptMessage(ctx, "No tokens available for this chain.", buildCrossChainChainPickerKeyboard([], 0));
+        return;
+      }
+      await editTradePromptMessage(
+        ctx,
+        `🌐 Select Token — ${chainName}\n\nWhich token are you sending?`,
+        buildCrossChainTokenPickerKeyboard(chainTokens, chainId, chainName)
+      );
+    } catch {
+      await editTradePromptMessage(ctx, "Failed to load tokens. Please try again.", buildWalletKeyboard());
+    }
+    return;
+  }
+
+  if (data.startsWith(CC_TOKEN_PREFIX)) {
+    const [chainId, tokenAddress, tokenSymbol, decimalsStr] = data.slice(CC_TOKEN_PREFIX.length).split(":");
+    if (!chainId || !tokenAddress || !tokenSymbol) return;
+    const tokenDecimals = parseInt(decimalsStr ?? "6", 10);
+    await saveCrossChainSession(ctx.from.id, {
+      step: "awaiting_amount",
+      chainId,
+      chainName: chainId,
+      tokenAddress,
+      tokenSymbol,
+      tokenDecimals,
+    });
+    await editTradePromptMessage(
+      ctx,
+      `🌐 How much ${tokenSymbol} are you sending?\n\nType the amount, e.g. 10`,
+      buildCrossChainAmountPromptKeyboard()
+    );
+    return;
+  }
+
+  if (data === CC_CONFIRM) {
+    const session = await loadCrossChainSession(ctx.from.id);
+    if (!session || session.step !== "pending_confirm" || !session.amount) {
+      await editTradePromptMessage(ctx, "Session expired. Please start again.", buildWalletKeyboard());
+      return;
+    }
+    try {
+      const amountRaw = BigInt(Math.round(Number(session.amount) * 10 ** session.tokenDecimals)).toString();
+      const result = await createCrossChainDeposit({
+        telegramId: ctx.from.id,
+        originChainId: session.chainId,
+        originAsset: session.tokenAddress,
+        originSymbol: session.tokenSymbol,
+        amountRaw,
+      });
+      await clearCrossChainSession(ctx.from.id);
+      await editTradePromptMessage(
+        ctx,
+        buildCrossChainDepositAddressText({
+          depositAddress: result.depositAddress,
+          originSymbol: session.tokenSymbol,
+          expectedUsdcOut: result.expectedUsdcOut,
+          expiresInSeconds: result.expiresInSeconds,
+        }),
+        buildCrossChainDepositAddressKeyboard(result.depositRequestId)
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Something went wrong.";
+      await editTradePromptMessage(ctx, `Cross-chain deposit failed: ${msg}`, buildWalletKeyboard());
+    }
+    return;
+  }
+
+  if (data === CC_CANCEL) {
+    await clearCrossChainSession(ctx.from.id);
+    await renderWalletView(ctx, ctx.from.id, { refresh: false });
+    return;
+  }
+
+  if (data.startsWith(CC_STATUS_PREFIX)) {
+    const depositRequestId = data.slice(CC_STATUS_PREFIX.length);
+    try {
+      const status = await getDextopusDepositStatus(depositRequestId);
+      await editTradePromptMessage(
+        ctx,
+        buildCrossChainStatusText({
+          status: status.status,
+          executionStatus: status.executionStatus,
+          originTxs: status.originTransactionHashes,
+          destTxs: status.destinationTransactionHashes,
+        }),
+        buildCrossChainDepositAddressKeyboard(depositRequestId)
+      );
+    } catch {
+      await editTradePromptMessage(ctx, "Could not fetch deposit status. Please try again.", buildCrossChainDepositAddressKeyboard(depositRequestId));
+    }
+    return;
+  }
+
 
   if (data === WALLET_NAIRA_HELP) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
@@ -2277,6 +2528,20 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
     return true;
   }
 
+  // Cross-chain deposit amount input
+  const ccSession = await loadCrossChainSession(ctx.from.id);
+  if (ccSession?.step === "awaiting_amount") {
+    const amount = Number(messageText.replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await ctx.reply("Enter a valid amount, e.g. 10", { reply_markup: buildCrossChainAmountPromptKeyboard() });
+      return true;
+    }
+    const updated: CrossChainSession = { ...ccSession, step: "pending_confirm", amount: String(amount) };
+    await saveCrossChainSession(ctx.from.id, updated);
+    await ctx.reply(buildCrossChainConfirmText(updated), { reply_markup: buildCrossChainConfirmKeyboard() });
+    return true;
+  }
+
   // Offramp session handling
   const offrampSession = await loadOfframpSession(ctx.from.id);
 
@@ -2503,8 +2768,9 @@ export async function handleWallet(ctx: Context): Promise<void> {
     const destinationAddress = args[2]?.trim() ?? "";
 
     if (!Number.isFinite(amount) || amount <= 0 || !destinationAddress) {
-      await ctx.reply(buildWalletWithdrawHelpText(), {
-        reply_markup: buildWalletKeyboard(),
+      const balance = await getBalance(ctx.from.id);
+      await ctx.reply(buildWalletWithdrawAmountText(balance), {
+        reply_markup: buildWithdrawCancelKeyboard(),
       });
       return;
     }
@@ -2542,83 +2808,9 @@ export async function handleWallet(ctx: Context): Promise<void> {
   }
 
   if (subcommand === "deposit-cross") {
-    // Usage: /wallet deposit-cross <chainId> <tokenAddress> <amountRaw>
-    const originChainId = args[1]?.trim() ?? "";
-    const originAsset = args[2]?.trim() ?? "";
-    const amountRaw = args[3]?.trim() ?? "";
-
-    if (!originChainId || !originAsset || !amountRaw || !/^\d+$/.test(amountRaw)) {
-      await ctx.reply(buildWalletCrossChainHelpText(), {
-        reply_markup: buildWalletKeyboard(),
-      });
-      return;
-    }
-
-    try {
-      const result = await createCrossChainDeposit({
-        telegramId: ctx.from.id,
-        originChainId,
-        originAsset,
-        originSymbol: originAsset.length > 10 ? originAsset.slice(0, 6) + "…" : originAsset,
-        amountRaw,
-      });
-      await ctx.reply(
-        buildWalletCrossChainResultText({
-          depositAddress: result.depositAddress,
-          depositRequestId: result.depositRequestId,
-          originSymbol: originAsset,
-          expectedUsdcOut: result.expectedUsdcOut,
-          expiresInSeconds: result.expiresInSeconds,
-        }),
-        { reply_markup: buildWalletKeyboard() }
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Something went wrong.";
-      await ctx.reply(`❌ Cross-chain deposit failed: ${message}`, {
-        reply_markup: buildWalletKeyboard(),
-      });
-    }
-
-    return;
-  }
-
-  if (subcommand === "deposit-cross") {
-    const originChainId = args[1]?.trim() ?? "";
-    const originAsset = args[2]?.trim() ?? "";
-    const humanAmount = args[3]?.trim() ?? "";
-    const decimals = Number.parseInt(args[4]?.trim() ?? "6", 10);
-
-    if (!originChainId || !originAsset || !humanAmount || !Number.isFinite(Number(humanAmount)) || Number(humanAmount) <= 0) {
-      await ctx.reply(buildWalletCrossChainHelpText(), { reply_markup: buildWalletKeyboard() });
-      return;
-    }
-
-    // Convert human amount to smallest unit
-    const amountRaw = BigInt(Math.round(Number(humanAmount) * 10 ** decimals)).toString();
-
-    try {
-      const result = await createCrossChainDeposit({
-        telegramId: ctx.from.id,
-        originChainId,
-        originAsset,
-        originSymbol: originAsset,
-        amountRaw,
-      });
-      await ctx.reply(
-        buildWalletCrossChainResultText({
-          depositAddress: result.depositAddress,
-          depositRequestId: result.depositRequestId,
-          originSymbol: originAsset,
-          expectedUsdcOut: result.expectedUsdcOut,
-          expiresInSeconds: result.expiresInSeconds,
-        }),
-        { reply_markup: buildWalletKeyboard() }
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Something went wrong.";
-      await ctx.reply(`❌ Cross-chain deposit failed: ${message}`, { reply_markup: buildWalletKeyboard() });
-    }
-
+    await ctx.reply("Use the 🌐 Other chain button in your wallet to deposit from another chain.", {
+      reply_markup: buildWalletKeyboard(),
+    });
     return;
   }
 

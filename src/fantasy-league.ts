@@ -536,6 +536,8 @@ export async function hasPendingJoinCodeEntry(telegramId: number): Promise<boole
 export async function clearPendingJoinCodeEntry(telegramId: number): Promise<void> {
   await redis.del(fantasyJoinCodeStateKey(telegramId));
 }
+
+function fantasyRoundReminderKey(gameId: string, telegramId: number): string {
   return `fantasy:remind:${gameId}:${telegramId}`;
 }
 
@@ -700,6 +702,43 @@ export async function loadOfframpSession(
 
 export async function clearOfframpSession(telegramId: number): Promise<void> {
   await redis.del(offrampSessionKey(telegramId));
+}
+
+// ── Cross-chain deposit session ───────────────────────────────────────────────
+
+export interface CrossChainSession {
+  step: "awaiting_amount" | "pending_confirm";
+  chainId: string;
+  chainName: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  amount?: string;
+}
+
+const CROSS_CHAIN_SESSION_TTL_SECONDS = 10 * 60;
+
+function crossChainSessionKey(telegramId: number): string {
+  return `cross_chain_session:${telegramId}`;
+}
+
+export async function saveCrossChainSession(
+  telegramId: number,
+  state: CrossChainSession
+): Promise<void> {
+  await redis.set(crossChainSessionKey(telegramId), JSON.stringify(state), "EX", CROSS_CHAIN_SESSION_TTL_SECONDS);
+}
+
+export async function loadCrossChainSession(
+  telegramId: number
+): Promise<CrossChainSession | null> {
+  const raw = await redis.get(crossChainSessionKey(telegramId));
+  if (!raw) return null;
+  try { return JSON.parse(raw) as CrossChainSession; } catch { return null; }
+}
+
+export async function clearCrossChainSession(telegramId: number): Promise<void> {
+  await redis.del(crossChainSessionKey(telegramId));
 }
 
 export async function addFantasyPlayBalance(
