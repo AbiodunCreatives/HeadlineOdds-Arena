@@ -709,30 +709,31 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
   const withdrawalLines = summary.recentWithdrawals.length === 0
     ? ["  None"]
     : summary.recentWithdrawals.slice(0, 3).map((e) =>
-        `  ${e.status.toUpperCase()}  ${formatUsdc(e.amount)}  →  ${abbreviateAddress(e.destination_address)}`
+        `  ${e.status === "completed" ? "✅" : e.status === "failed" ? "❌" : "⏳"}  ${formatUsdc(e.amount)}  →  ${abbreviateAddress(e.destination_address)}`
       );
 
-  const onrampLines = summary.recentOnramps.length === 0
+  const onrampCount = summary.recentOnramps.length;
+  const onrampLines = onrampCount === 0
     ? ["  None"]
     : summary.recentOnramps.slice(0, 3).map((e) => {
         const amt = e.actual_usdc_amount > 0 ? e.actual_usdc_amount : e.expected_usdc_amount;
-        return `  ${formatNaira(e.fiat_amount)}  →  ${formatUsdc(amt)}  ${e.status.toUpperCase()}`;
+        const icon = e.status.toUpperCase() === "COMPLETED" ? "✅" : e.status.toUpperCase() === "FAILED" ? "❌" : "⏳";
+        return `  ${icon}  ₦${Math.round(e.fiat_amount).toLocaleString("en-US")}  →  ${formatUsdc(amt)}`;
       });
 
   return [
     "💳 Wallet",
     "",
-    `Balance:  ${formatUsdc(summary.balance)}`,
+    `Balance       ${formatUsdc(summary.balance)}`,
+    "─────────────────────────",
+    "📥 Deposit address",
+    summary.wallet.owner_address,
     "",
-    "Deposit address (Solana USDC):",
-    `  ${summary.wallet.owner_address}`,
-    ...(ledgerLines.length > 0 ? ["", "Recent activity:", ...ledgerLines] : []),
-    "",
-    "Withdrawals:",
-    ...withdrawalLines,
-    "",
-    "NGN top-ups:",
+    `💰 NGN Top-ups${onrampCount > 0 ? `  (${onrampCount} recent)` : ""}`,
     ...onrampLines,
+    "",
+    "📤 Withdrawals",
+    ...withdrawalLines,
   ].join("\n");
 }
 
