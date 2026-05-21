@@ -216,10 +216,11 @@ function buildStartWelcomeText(): string {
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💳 Fund Wallet", START_WALLET)
-    .text("❓ How it works", START_HOW_IT_WORKS)
+    .text("🏟 Browse Arenas", START_LOBBY)
+    .text("⚡ Create Arena", ARENA_CREATE)
     .row()
-    .text("🤖 Ask anything", "support:ask");
+    .text("💳 Fund Wallet", START_WALLET)
+    .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
 function buildHowItWorksText(): string {
@@ -273,11 +274,10 @@ function buildStartOnboardingText(input: {
 function buildStartOnboardingKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🏟 Browse Arenas", START_LOBBY)
+    .text("⚡ Create Arena", ARENA_CREATE)
     .row()
     .text("💳 Wallet", START_WALLET)
-    .text("❓ How it works", START_HOW_IT_WORKS)
-    .row()
-    .text("🤖 Ask anything", "support:ask");
+    .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
 function buildCreateArenaPickerText(balance: number): string {
