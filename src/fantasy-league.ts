@@ -520,6 +520,22 @@ export async function loadWithdrawState(
 export async function clearWithdrawState(telegramId: number): Promise<void> {
   await redis.del(fantasyWithdrawStateKey(telegramId));
 }
+
+function fantasyJoinCodeStateKey(telegramId: number): string {
+  return `fantasy:join:code:${telegramId}`;
+}
+
+export async function savePendingJoinCodeEntry(telegramId: number): Promise<void> {
+  await redis.set(fantasyJoinCodeStateKey(telegramId), "1", "EX", FANTASY_CUSTOM_FUND_TTL_SECONDS);
+}
+
+export async function hasPendingJoinCodeEntry(telegramId: number): Promise<boolean> {
+  return Boolean(await redis.get(fantasyJoinCodeStateKey(telegramId)));
+}
+
+export async function clearPendingJoinCodeEntry(telegramId: number): Promise<void> {
+  await redis.del(fantasyJoinCodeStateKey(telegramId));
+}
   return `fantasy:remind:${gameId}:${telegramId}`;
 }
 

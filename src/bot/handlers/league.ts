@@ -37,6 +37,9 @@ import {
   saveWithdrawState,
   loadWithdrawState,
   clearWithdrawState,
+  savePendingJoinCodeEntry,
+  hasPendingJoinCodeEntry,
+  clearPendingJoinCodeEntry,
   FANTASY_MIN_ENTRY_FEE,
   type FantasyTradePlacementResult,
   type OfframpSessionState,
@@ -1863,6 +1866,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
   if (data === START_WALLET || data === WALLET_OPEN) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     await clearWithdrawState(ctx.from.id);
+    await clearPendingJoinCodeEntry(ctx.from.id);
     await renderWalletView(ctx, ctx.from.id, { refresh: true });
     return;
   }
@@ -1870,6 +1874,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
   if (data === START_LOBBY || data === LOBBY_REFRESH || data === ARENA_BACK_TO_LOBBY) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     await clearWithdrawState(ctx.from.id);
+    await clearPendingJoinCodeEntry(ctx.from.id);
     await openLobbyOrFundingPrompt(ctx, ctx.from.id);
     return;
   }
@@ -2373,6 +2378,24 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
     }
   }
 
+  // Join by code flow
+  if (await hasPendingJoinCodeEntry(ctx.from.id)) {
+    const code = messageText.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+    if (!code) {
+      await ctx.reply("Enter a valid arena code:", {
+        reply_markup: new InlineKeyboard().text("❌ Cancel", START_LOBBY),
+      });
+      return true;
+    }
+    await clearPendingJoinCodeEntry(ctx.from.id);
+    try {
+      await presentJoinPreview(ctx, ctx.from.id, code);
+    } catch (error) {
+      await replyFantasyJoinError(ctx, error, code);
+    }
+    return true;
+  }
+
   // Withdraw flow
   const withdrawState = await loadWithdrawState(ctx.from.id);
   if (withdrawState) {
@@ -2720,6 +2743,14 @@ export async function handleFundNgn(ctx: Context): Promise<void> {
   }
 
   const amount = Number.parseFloat((ctx.message?.text ?? "").split(/\s+/)[1] ?? "");
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    await ctx.reply(buildWalletNairaHelpText(), {
+      reply_markup: buildWalletNairaPickerKeyboard(),
+    });
+    return;
+  }
+
   const amountError = getWalletNairaAmountError(amount);
 
   if (amountError) {
@@ -2752,9 +2783,12 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
   const amount = Number.parseFloat(args[0] ?? "");
   const destinationAddress = args[1]?.trim() ?? "";
 
+  // No args — start interactive flow
   if (!Number.isFinite(amount) || amount <= 0 || !destinationAddress) {
-    await ctx.reply(buildWalletWithdrawHelpText(), {
-      reply_markup: buildWalletKeyboard(),
+    const balance = await getBalance(ctx.from.id);
+    await saveWithdrawState(ctx.from.id, { step: "amount" });
+    await ctx.reply(buildWalletWithdrawAmountText(balance), {
+      reply_markup: buildWithdrawCancelKeyboard(),
     });
     return;
   }
@@ -2926,7 +2960,11 @@ export async function handleLeague(ctx: Context): Promise<void> {
     const code = args[1]?.trim().toUpperCase();
 
     if (!code) {
-      await ctx.reply("Please provide an arena code. Example: /league join ABC123");
+      await savePendingJoinCodeEntry(ctx.from.id);
+      await ctx.reply(
+        "Enter the arena code to join:",
+        { reply_markup: new InlineKeyboard().text("❌ Cancel", START_LOBBY) }
+      );
       return;
     }
 
