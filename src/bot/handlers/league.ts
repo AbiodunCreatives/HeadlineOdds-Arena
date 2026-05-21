@@ -11,7 +11,8 @@ import {
   clearPendingFantasyCustomFundAmount,
   clearFantasyTradePromptState,
   resetFantasyTradePromptToDirection,
-  clearPendingFantasyLeagueJoin,  createFantasyLeagueGame,
+  clearPendingFantasyLeagueJoin,
+  createFantasyLeagueGame,
   getFantasyLeagueStatusView,
   getFantasyLeagueBoardText,
   hasPendingFantasyCustomFundAmount,
@@ -33,6 +34,9 @@ import {
   saveOfframpSession,
   loadOfframpSession,
   clearOfframpSession,
+  saveWithdrawState,
+  loadWithdrawState,
+  clearWithdrawState,
   FANTASY_MIN_ENTRY_FEE,
   type FantasyTradePlacementResult,
   type OfframpSessionState,
@@ -210,16 +214,17 @@ function buildStartWelcomeText(): string {
     "Predict BTC UP or DOWN every 15 minutes.",
     "Best bankroll at the end wins the USDC prize pool.",
     "",
-    "Fund your wallet to get started.",
+    "👇 Fund your wallet first — entry fees start at $1.",
+    "Winnings land back in your wallet instantly.",
   ].join("\n");
 }
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🏟 Browse Arenas", START_LOBBY)
-    .text("⚡ Create Arena", ARENA_CREATE)
+    .text("💵 Fund with Naira", WALLET_NAIRA_HELP)
+    .text("💳 Deposit USDC", START_WALLET)
     .row()
-    .text("💳 Fund Wallet", START_WALLET)
+    .text("🏟 Browse Arenas", START_LOBBY)
     .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
@@ -876,18 +881,28 @@ function buildWalletCommandHelpText(): string {
   ].join("\n");
 }
 
-function buildWalletWithdrawHelpText(): string {
+function buildWalletWithdrawAmountText(balance: number): string {
   return [
     "📤 Withdraw USDC",
     "",
+    `Your balance: ${formatUsdc(balance)}`,
     `Minimum: ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}`,
     "",
-    "Command:",
-    "  /withdraw <amount> <solana_address>",
-    "",
-    "Example:",
-    "  /withdraw 5 YourSolanaAddressHere",
+    "How much do you want to withdraw?",
+    "Type an amount, e.g.  5  or  10.50",
   ].join("\n");
+}
+
+function buildWalletWithdrawAddressText(amount: number): string {
+  return [
+    `📤 Withdraw ${formatUsdc(amount)}`,
+    "",
+    "Paste your Solana wallet address:",
+  ].join("\n");
+}
+
+function buildWithdrawCancelKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("❌ Cancel", WALLET_OPEN);
 }
 
 function buildWalletNairaOrderText(input: {
@@ -1847,12 +1862,14 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
   if (data === START_WALLET || data === WALLET_OPEN) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
+    await clearWithdrawState(ctx.from.id);
     await renderWalletView(ctx, ctx.from.id, { refresh: true });
     return;
   }
 
   if (data === START_LOBBY || data === LOBBY_REFRESH || data === ARENA_BACK_TO_LOBBY) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
+    await clearWithdrawState(ctx.from.id);
     await openLobbyOrFundingPrompt(ctx, ctx.from.id);
     return;
   }
@@ -1911,7 +1928,9 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
 
   if (data === WALLET_WITHDRAW_HELP) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
-    await editTradePromptMessage(ctx, buildWalletWithdrawHelpText(), buildWalletKeyboard());
+    const balance = await getBalance(ctx.from.id);
+    await saveWithdrawState(ctx.from.id, { step: "amount" });
+    await editTradePromptMessage(ctx, buildWalletWithdrawAmountText(balance), buildWithdrawCancelKeyboard());
     return;
   }
 
@@ -2350,6 +2369,55 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
         { reply_markup: buildOfframpConfirmKeyboard() }
       );
 
+      return true;
+    }
+  }
+
+  // Withdraw flow
+  const withdrawState = await loadWithdrawState(ctx.from.id);
+  if (withdrawState) {
+    if (withdrawState.step === "amount") {
+      const amount = Number.parseFloat(messageText.replace(/[^0-9.]/g, ""));
+      if (!Number.isFinite(amount) || amount < config.SOLANA_WITHDRAW_MIN_AMOUNT) {
+        const balance = await getBalance(ctx.from.id);
+        await ctx.reply(
+          `Minimum withdrawal is ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}. Enter a valid amount.`,
+          { reply_markup: buildWithdrawCancelKeyboard() }
+        );
+        return true;
+      }
+      const balance = await getBalance(ctx.from.id);
+      if (amount > balance) {
+        await ctx.reply(
+          `You only have ${formatUsdc(balance)}. Enter a lower amount.`,
+          { reply_markup: buildWithdrawCancelKeyboard() }
+        );
+        return true;
+      }
+      await saveWithdrawState(ctx.from.id, { step: "address", amount });
+      await ctx.reply(buildWalletWithdrawAddressText(amount), { reply_markup: buildWithdrawCancelKeyboard() });
+      return true;
+    }
+
+    if (withdrawState.step === "address") {
+      const address = messageText.trim();
+      if (!isValidSolanaAddress(address)) {
+        await ctx.reply("That Solana address doesn't look right. Please double-check and try again.", {
+          reply_markup: buildWithdrawCancelKeyboard(),
+        });
+        return true;
+      }
+      await clearWithdrawState(ctx.from.id);
+      try {
+        await requestFantasyWalletWithdrawal({ telegramId: ctx.from.id, destinationAddress: address, amount: withdrawState.amount });
+        await processFantasyWalletWithdrawals();
+        await ctx.reply(buildWalletWithdrawalRequestedText({ amount: withdrawState.amount, destinationAddress: address }), {
+          reply_markup: buildWalletKeyboard(),
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Something went wrong.";
+        await ctx.reply(msg, { reply_markup: buildWalletKeyboard() });
+      }
       return true;
     }
   }

@@ -497,7 +497,29 @@ function fantasyCustomFundKey(telegramId: number): string {
   return `fantasy:fund:custom:${telegramId}`;
 }
 
-function fantasyRoundReminderKey(gameId: string, telegramId: number): string {
+function fantasyWithdrawStateKey(telegramId: number): string {
+  return `fantasy:withdraw:state:${telegramId}`;
+}
+
+export async function saveWithdrawState(
+  telegramId: number,
+  state: { step: "amount" } | { step: "address"; amount: number }
+): Promise<void> {
+  await redis.set(fantasyWithdrawStateKey(telegramId), JSON.stringify(state), "EX", FANTASY_CUSTOM_FUND_TTL_SECONDS);
+}
+
+export async function loadWithdrawState(
+  telegramId: number
+): Promise<{ step: "amount" } | { step: "address"; amount: number } | null> {
+  const raw = await redis.get(fantasyWithdrawStateKey(telegramId));
+  if (!raw) return null;
+  try { return JSON.parse(raw) as { step: "amount" } | { step: "address"; amount: number }; }
+  catch { return null; }
+}
+
+export async function clearWithdrawState(telegramId: number): Promise<void> {
+  await redis.del(fantasyWithdrawStateKey(telegramId));
+}
   return `fantasy:remind:${gameId}:${telegramId}`;
 }
 
@@ -1063,39 +1085,28 @@ function buildLiveRoundPromptText(state: PromptState): string {
   const stageLines =
     state.stage === "stake" && state.selectedDirection !== null && selectedPrice !== null
       ? [
-          `${formatFantasyTradeDirection(state.selectedDirection)} selected at ${formatRoundPromptPrice(
-            selectedPrice
-          )}c.`,
-          `If you're right: win ${formatLiveRoundPromptSignedMoney(
-            getFantasyProjectedProfit(selectedPrice, 100)
-          )} on $100.`,
+          `You picked ${state.selectedDirection === "UP" ? "⬆ YES" : "⬇ NO"} at ${formatRoundPromptPrice(selectedPrice)}¢`,
+          `If correct: win ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(selectedPrice, 100))} on $100`,
           "How many USDC do you want to play?",
         ]
-      : ["Tap Buy YES or Buy NO first, then choose how many USDC to play."];
+      : [];
 
   return [
-    "------------------",
-    `ROUND ${state.roundNumber}  |  LIVE`,
-    "------------------",
+    "━━━━━━━━━━━━━━━━━━",
+    `⚡ ROUND ${state.roundNumber}  •  LIVE`,
+    "━━━━━━━━━━━━━━━━━━",
     buildLiveRoundQuestion(state.referencePrice),
     "",
-    `Current price: ${formatLiveRoundPromptBtcPrice(state.currentPrice)}`,
-    `Target price: ${formatLiveRoundPromptBtcPrice(state.referencePrice)}`,
+    `Current BTC: ${formatLiveRoundPromptBtcPrice(state.currentPrice)}`,
     "",
-    `Buy YES   ${yesChance}%   ${yesPrice}c   wins ${formatLiveRoundPromptSignedMoney(
-      getFantasyProjectedProfit(state.upPrice, 100)
-    )} on $100`,
-    `Buy NO    ${noChance}%   ${noPrice}c   wins ${formatLiveRoundPromptSignedMoney(
-      getFantasyProjectedProfit(state.downPrice, 100)
-    )} on $100`,
+    `⬆ YES   ${yesChance}%   ${yesPrice}¢   wins ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(state.upPrice, 100))} on $100`,
+    `⬇ NO    ${noChance}%   ${noPrice}¢   wins ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(state.downPrice, 100))} on $100`,
     "",
-    `Rank #${state.rank}  |  Stack ${formatWholeMoney(state.virtualBalance)} (${formatRoundPromptBalanceDelta(
-      state.game,
-      state.virtualBalance
-    )}%)`,
-    `Round: ${formatRoundCountdown(state.closingDate)}  |  Arena: ${arenaTimeLeft}`,
-    "",
-    ...stageLines,
+    "━━━━━━━━━━━━━━━━━━",
+    `🏆 Rank #${state.rank}  •  Stack ${formatWholeMoney(state.virtualBalance)} (${formatRoundPromptBalanceDelta(state.game, state.virtualBalance)}%)`,
+    `💰 Prize now: ${formatMoney(getProjectedPrizeForRank(state.rank, state.memberCount, state.game.prize_pool))}`,
+    `⏱ Round: ${formatRoundCountdown(state.closingDate)}  •  Arena: ${arenaTimeLeft}`,
+    ...(stageLines.length > 0 ? ["", ...stageLines] : []),
   ].join("\n");
 }
 
@@ -1747,6 +1758,8 @@ function renderLeaderboardText(input: {
     ...rows,
     "",
     summaryLine,
+    "",
+    "Player names are anonymised for privacy. You appear as 'you'.",
   ].join("\n");
 }
 

@@ -7,7 +7,6 @@ import type {
   LeaderboardEntry,
   LiveStatusParams,
   RoundLockedParams,
-  RoundPromptParams,
   RoundResultParams,
 } from './types'
 
@@ -84,35 +83,6 @@ export function arenaLiveMessage(p: ArenaLiveParams): BotMessage {
   ].join('\n')
 
   return msg(text)
-}
-
-export function roundPromptMessage(p: RoundPromptParams): BotMessage {
-  const code = escapeMarkdown(p.code)
-  const closeTime = escapeMarkdown(formatTime(p.closesAt))
-  const btcPrice = escapeMarkdown(p.btcPrice.toLocaleString('en-US'))
-  const upOdds = escapeMarkdown(p.upOdds.toFixed(2))
-  const downOdds = escapeMarkdown(p.downOdds.toFixed(2))
-
-  const text = [
-    `⚡ *Round ${p.roundNumber} · Arena ${code}*`,
-    `🕐 Closes ${closeTime}  ·  ${escapeMarkdown(String(p.arenaMinutesLeft))}m left in arena`,
-    SEP,
-    `₿  BTC/USD    \`$${btcPrice}\``,
-    `⬆️  UP    \`${upOdds}\`     ⬇️  DOWN   \`${downOdds}\``,
-    SEP,
-    `⏳ Entry window closes in ${p.entryWindowMinutes}m`,
-  ].join('\n')
-
-  const kb = new InlineKeyboard()
-    .text('📊 View market', `market:${p.code}:${p.roundNumber}`)
-    .text('🏆 Leaderboard', `lb:${p.code}`)
-    .row()
-    .text('⬆ How to catch #1', `catch1:${p.code}`)
-    .row()
-    .text('🔄 Refresh', `refresh:${p.code}`)
-    .text('🏟 Lobby', 'lobby')
-
-  return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
 
 export function roundLockedMessage(p: RoundLockedParams): BotMessage {
