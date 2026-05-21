@@ -1,6 +1,10 @@
 import { supabase } from "../src/db/client.ts";
 
-const DEMO_CREATOR_TELEGRAM_ID = 7_068_951_342;
+const DEMO_CREATOR_TELEGRAM_ID = Number(process.env["DEMO_CREATOR_TELEGRAM_ID"] ?? "0");
+if (!DEMO_CREATOR_TELEGRAM_ID) {
+  console.error("Set DEMO_CREATOR_TELEGRAM_ID env var before running this script.");
+  process.exit(1);
+}
 const DEMO_ENTRY_FEE = 10;
 const DEMO_DURATION_HOURS = 24;
 const DEMO_PRIZE_POOL = 138;

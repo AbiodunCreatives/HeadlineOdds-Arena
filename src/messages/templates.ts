@@ -51,20 +51,20 @@ function msg(text: string, reply_markup?: ReplyMarkup): BotMessage {
 export function arenaCreatedMessage(p: ArenaCreatedParams): BotMessage {
   const code = escapeMarkdown(p.code)
   const text = [
-    `🎯 *ARENA CREATED*`,
+    `🎯 *Arena Created\\!*`,
     `\`${code}\`  ·  Starts in ~${p.startsInMin} min  ·  1h duration`,
     SEP,
-    `💰 Prize pool     \`${escapeMarkdown(usd(p.prizePool))}\``,
+    `🏆 Prize pool     \`${escapeMarkdown(usd(p.prizePool))}\``,
     `🏦 Your stack     \`${escapeMarkdown(usd(p.virtualStack))}\``,
     `👥 Players        \`1\``,
     SEP,
     `Prize pool grows as others join\\.`,
-    `I'll ping you when round 1 opens\\.`,
+    `You'll be pinged when round 1 opens\\.`,
   ].join('\n')
 
   const kb = new InlineKeyboard()
-    .text('Share invite ↗', `arena_share:${p.code}`)
-    .text('Back to lobby', 'lobby')
+    .text('📤 Share invite', `arena_share:${p.code}`)
+    .text('🏟 Lobby', 'lobby')
 
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
@@ -73,14 +73,14 @@ export function arenaLiveMessage(p: ArenaLiveParams): BotMessage {
   const code = escapeMarkdown(p.code)
   const commPct = Math.round((p.commission / p.grossPool) * 100)
   const text = [
-    `⚡ *ARENA ${code} · LIVE*`,
+    `⚡ *Arena ${code} · Live*`,
     SEP,
     `🏆 Net prize pool  \`${escapeMarkdown(usd(p.netPrizePool))}\``,
     `🏦 Your bankroll   \`${escapeMarkdown(usd(p.virtualBankroll))}\``,
     `👥 Players         \`${p.players}\``,
     SEP,
     `Gross \`${escapeMarkdown(usd(p.grossPool))}\` · Commission \\(${commPct}%\\) \`${escapeMarkdown(usd(p.commission))}\``,
-    `15\\-min BTC rounds until arena ends\\.`,
+    `BTC 15\\-min rounds until arena ends\\.`,
   ].join('\n')
 
   return msg(text)
@@ -94,24 +94,23 @@ export function roundPromptMessage(p: RoundPromptParams): BotMessage {
   const downOdds = escapeMarkdown(p.downOdds.toFixed(2))
 
   const text = [
-    `⚡ *Round ${p.roundNumber} · ${code}*`,
-    `🕐 Closes ${closeTime}  ·  ${escapeMarkdown(String(p.arenaMinutesLeft))}:00 left`,
+    `⚡ *Round ${p.roundNumber} · Arena ${code}*`,
+    `🕐 Closes ${closeTime}  ·  ${escapeMarkdown(String(p.arenaMinutesLeft))}m left in arena`,
     SEP,
     `₿  BTC/USD    \`$${btcPrice}\``,
-    `⬆️ UP    \`${upOdds}\`     ⬇️ DOWN   \`${downOdds}\``,
+    `⬆️  UP    \`${upOdds}\`     ⬇️  DOWN   \`${downOdds}\``,
     SEP,
-    `⏳ Bot entry window closes in ${p.entryWindowMinutes}m`,
-    `🏟 Arena time left: ${escapeMarkdown(String(p.arenaMinutesLeft))}m`,
+    `⏳ Entry window closes in ${p.entryWindowMinutes}m`,
   ].join('\n')
 
   const kb = new InlineKeyboard()
-    .text('View market ↗', `market:${p.code}:${p.roundNumber}`)
-    .text('Leaderboard', `lb:${p.code}`)
+    .text('📊 View market', `market:${p.code}:${p.roundNumber}`)
+    .text('🏆 Leaderboard', `lb:${p.code}`)
     .row()
-    .text('How to catch #1', `catch1:${p.code}`)
+    .text('⬆ How to catch #1', `catch1:${p.code}`)
     .row()
-    .text('Refresh live', `refresh:${p.code}`)
-    .text('Back to lobby', 'lobby')
+    .text('🔄 Refresh', `refresh:${p.code}`)
+    .text('🏟 Lobby', 'lobby')
 
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
@@ -128,7 +127,7 @@ export function roundLockedMessage(p: RoundLockedParams): BotMessage {
     `Shares      \`${escapeMarkdown(p.shares.toFixed(2))}\``,
     `Balance     \`${escapeMarkdown(usd(p.balanceAfter))}\``,
     SEP,
-    `Result sent when the round closes\\.`,
+    `Result arrives when the round closes\\. Good luck\\! 🎯`,
   ].join('\n')
 
   return msg(text)
@@ -138,19 +137,19 @@ export function roundResultMessage(p: RoundResultParams): BotMessage {
   const code = escapeMarkdown(p.code)
   const tradeCheck = p.won ? '✓' : '✗'
   const header = p.won
-    ? `✅ *Round ${p.roundNumber} closed · You won\\!*`
+    ? `🎉 *Round ${p.roundNumber} closed · You won\\!*`
     : `❌ *Round ${p.roundNumber} closed · You lost*`
 
   const text = [
     header,
-    `BTC finished ${p.btcResult} · Your trade: ${p.userTrade} ${tradeCheck}`,
+    `BTC finished ${p.btcResult} · Your call: ${p.userTrade} ${tradeCheck}`,
     `Balance   \`${escapeMarkdown(usd(p.balanceAfter))}\` USDC`,
     `Rank      \\#${p.currentRank} of ${p.totalPlayers}`,
   ].join('\n')
 
   if (p.won) return msg(text)
 
-  const kb = new InlineKeyboard().text('View leaderboard', `lb:${p.code}`)
+  const kb = new InlineKeyboard().text('🏆 Leaderboard', `lb:${p.code}`)
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
 
@@ -183,11 +182,11 @@ export function liveStatusMessage(p: LiveStatusParams): BotMessage {
   ].join('\n')
 
   const kb = new InlineKeyboard()
-    .text('How to catch #1', `catch1:${p.code}`)
-    .text('Live market', `market:${p.code}`)
+    .text('⬆ How to catch #1', `catch1:${p.code}`)
+    .text('📊 Live market', `market:${p.code}`)
     .row()
-    .text('Refresh', `refresh:${p.code}`)
-    .text('Back to lobby', 'lobby')
+    .text('🔄 Refresh', `refresh:${p.code}`)
+    .text('🏟 Lobby', 'lobby')
 
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }
@@ -208,7 +207,7 @@ export function finalResultMessage(p: FinalResultParams): BotMessage {
     : `Your payout:     — No payout this time`
 
   const text = [
-    `🏁 *Arena ${code} — Final*`,
+    `🏁 *Arena ${code} — Final Results*`,
     `${p.durationHours}h · ${p.roundsPlayed} rounds played`,
     SEP,
     ...lbRows,
@@ -218,8 +217,8 @@ export function finalResultMessage(p: FinalResultParams): BotMessage {
   ].join('\n')
 
   const kb = new InlineKeyboard()
-    .text('Play again', 'lobby')
-    .text('Share result ↗', `share_result:${p.code}`)
+    .text('🏟 Play again', 'lobby')
+    .text('📤 Share result', `share_result:${p.code}`)
 
   return msg(text, { inline_keyboard: kb.inline_keyboard })
 }

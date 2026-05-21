@@ -1055,7 +1055,8 @@ BEGIN
       'place',
       p_place
     )
-  );
+  )
+  ON CONFLICT (idempotency_key) DO NOTHING;
 
   RETURN TRUE;
 END;

@@ -1,3 +1,5 @@
+import { randomBytes } from "crypto";
+
 import { Api, InlineKeyboard } from "grammy";
 
 import {
@@ -463,8 +465,10 @@ async function getBotUsername(): Promise<string> {
 }
 
 function shortCode(): string {
-  const left = Math.random().toString(36).slice(2, 5).toUpperCase();
-  const right = Math.random().toString(36).slice(2, 5).toUpperCase();
+  // crypto-safe randomness; base36-encode two 3-byte chunks
+  const buf = randomBytes(6);
+  const left = buf.readUIntBE(0, 3).toString(36).padStart(3, "0").slice(-3).toUpperCase();
+  const right = buf.readUIntBE(3, 3).toString(36).padStart(3, "0").slice(-3).toUpperCase();
   return `${left}-${right}`;
 }
 

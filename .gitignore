@@ -10,3 +10,8 @@ src/bot/handlers/Untitled-1.txt
 codex-session.jsonl
 claude-session.jsonl
 superteam-agentic-engineering-grant-draft.md
+tmp/
+POST_BETA_SECURITY_FIX_INSTRUCTIONS.md
+brand.md
+dashboard/.next/
+arena/.next/

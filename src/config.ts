@@ -111,6 +111,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DEXTOPUS_PARTNER_FEE_RECIPIENT: optionalString,
   DEXTOPUS_PARTNER_FEE_BPS: z.coerce.number().int().nonnegative().default(0),
+  // Comma-separated Telegram IDs allowed to use the bot. Empty = open to all.
+  TESTER_ALLOWLIST: optionalString,
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -226,3 +228,22 @@ if (config.NODE_ENV === "production") {
 
 export { config };
 export type Config = typeof config;
+
+// Parsed allowlist set. Empty set means open access.
+const _allowlistIds: Set<number> = new Set(
+  (config.TESTER_ALLOWLIST ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n > 0)
+);
+
+/**
+ * Returns true if the user is allowed to use the bot.
+ * When TESTER_ALLOWLIST is empty, everyone is allowed.
+ */
+export function isTesterAllowed(telegramId: number): boolean {
+  if (_allowlistIds.size === 0) return true;
+  return _allowlistIds.has(telegramId);
+}
