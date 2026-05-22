@@ -85,9 +85,17 @@ async function dextopusFetch<T>(
 }
 
 /** Fetch all supported deposit origin chains and tokens. Cache the result. */
+let _tokensCache: { data: DextopusToken[]; expiresAt: number } | null = null;
+const TOKENS_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export async function getDextopusTokens(
   supportsStaticAddress?: boolean
 ): Promise<DextopusToken[]> {
+  const now = Date.now();
+  if (supportsStaticAddress === undefined && _tokensCache && now < _tokensCache.expiresAt) {
+    return _tokensCache.data;
+  }
+
   const qs =
     supportsStaticAddress !== undefined
       ? `?supportsStaticAddress=${supportsStaticAddress}`
@@ -105,7 +113,7 @@ export async function getDextopusTokens(
     }>;
   }>(`/api/deposit/tokens${qs}`);
 
-  return (envelope.chains ?? []).flatMap((chain) =>
+  const result = (envelope.chains ?? []).flatMap((chain) =>
     (chain.solverCurrencies ?? []).map((t) => ({
       chainId: chain.chainId,
       address: t.address,
@@ -114,6 +122,12 @@ export async function getDextopusTokens(
       supportsStaticAddress: t.supportsStaticAddress,
     }))
   );
+
+  if (supportsStaticAddress === undefined) {
+    _tokensCache = { data: result, expiresAt: Date.now() + TOKENS_CACHE_TTL_MS };
+  }
+
+  return result;
 }
 
 /** Get destination options for a given origin asset. */

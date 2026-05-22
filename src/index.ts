@@ -119,7 +119,7 @@ bot.command("wallet", wrap(handleWallet));
 bot.command("fundngn", wrap(handleFundNgn));
 bot.command("offrampngn", wrap(handleOfframpNgn));
 bot.command("withdraw", wrap(handleWithdraw));
-  bot.command("adminwithdraw", wrap(handleAdminWithdraw));
+bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));

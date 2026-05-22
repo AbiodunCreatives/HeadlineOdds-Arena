@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getBalance } from "../../db/balances.ts";
 import { supabase } from "../../db/client.ts";
 import { getFantasyWalletByTelegramId } from "../../db/wallets.ts";
+import { config } from "../../config.ts";
 import { redis } from "../../utils/rateLimit.ts";
 
 const SYSTEM_PROMPT = `You are Hedi, the official HeadlineOdds Arena support assistant — a friendly, helpful, and knowledgeable agent built directly into the bot. You help users understand, join, and win in HeadlineOdds Arena.
@@ -269,7 +270,7 @@ export async function handleSupportQuestion(
   const allowed = await checkSupportRateLimit(telegramId);
   if (!allowed) return RATE_LIMIT_MSG;
 
-  const apiKey = process.env["GROQ_API_KEY"];
+  const apiKey = config.GROQ_API_KEY;
   if (!apiKey) return FALLBACK;
 
   try {
