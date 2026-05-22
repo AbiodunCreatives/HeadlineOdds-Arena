@@ -121,7 +121,7 @@ bot.command("offrampngn", wrap(handleOfframpNgn));
 bot.command("withdraw", wrap(handleWithdraw));
   bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
-bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp):/, wrap(handleFantasyLeagueUiAction));
+bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
 bot.callbackQuery("fantasy:join:decline", wrap(handleFantasyJoinDecline));
 bot.on("message:text", async (ctx, next) => {

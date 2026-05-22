@@ -112,6 +112,26 @@ const CC_CANCEL        = "cc:cancel";
 const CC_STATUS_PREFIX = "cc:status:";
 const ARENA_CREATE_CUSTOM = "arena:create:custom";
 const WALLET_NAIRA_MIN_AMOUNT = 1_000;
+
+const CHAIN_NAMES: Record<string, string> = {
+  "1": "Ethereum",
+  "56": "BNB Chain",
+  "137": "Polygon",
+  "42161": "Arbitrum",
+  "10": "Optimism",
+  "8453": "Base",
+  "43114": "Avalanche",
+  "250": "Fantom",
+  "100": "Gnosis",
+  "1101": "Polygon zkEVM",
+  "324": "zkSync Era",
+  "59144": "Linea",
+  "534352": "Scroll",
+  "81457": "Blast",
+  "7777777": "Zora",
+  "792703809": "Solana",
+  "728126428": "Tron",
+};
 const WALLET_NAIRA_MAX_AMOUNT = 20_000;
 const WALLET_NAIRA_PRESET_AMOUNTS = [1_000, 2_000, 5_000, 10_000] as const;
 
@@ -827,9 +847,10 @@ function buildCrossChainTokenPickerKeyboard(
   chainName: string
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (let i = 0; i < Math.min(tokens.length, 16); i += 3) {
-    for (const t of tokens.slice(i, i + 3)) {
-      kb.text(t.symbol, `${CC_TOKEN_PREFIX}${chainId}:${t.address}:${t.symbol}:${t.decimals}`);
+  const limit = Math.min(tokens.length, 16);
+  for (let i = 0; i < limit; i += 3) {
+    for (let j = i; j < Math.min(i + 3, limit); j++) {
+      kb.text(tokens[j].symbol, `${CC_TOKEN_PREFIX}${chainId}:${j}`);
     }
     kb.row();
   }
@@ -2069,7 +2090,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       const chainMap = new Map<string, { chainId: number | string; name: string }>();
       for (const t of tokens) {
         const key = String(t.chainId);
-        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: key });
+        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: CHAIN_NAMES[key] ?? key });
       }
       const chains = Array.from(chainMap.values());
       await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(chains, 0));
@@ -2086,7 +2107,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       const chainMap = new Map<string, { chainId: number | string; name: string }>();
       for (const t of tokens) {
         const key = String(t.chainId);
-        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: key });
+        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: CHAIN_NAMES[key] ?? key });
       }
       await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(Array.from(chainMap.values()), page));
     } catch {
@@ -2118,13 +2139,21 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
   }
 
   if (data.startsWith(CC_TOKEN_PREFIX)) {
-    const [chainId, tokenAddress, tokenSymbol, decimalsStr] = data.slice(CC_TOKEN_PREFIX.length).split(":");
-    if (!chainId || !tokenAddress || !tokenSymbol) return;
-    const tokenDecimals = parseInt(decimalsStr ?? "6", 10);
+    const [chainId, indexStr] = data.slice(CC_TOKEN_PREFIX.length).split(":");
+    if (!chainId || indexStr === undefined) return;
+    const tokenIndex = parseInt(indexStr, 10);
+    const allTokens = await getDextopusTokens();
+    const chainTokens = allTokens.filter((t) => String(t.chainId) === chainId);
+    const token = chainTokens[tokenIndex];
+    if (!token) {
+      await editTradePromptMessage(ctx, "Token not found. Please try again.", buildWalletKeyboard());
+      return;
+    }
+    const { address: tokenAddress, symbol: tokenSymbol, decimals: tokenDecimals } = token;
     await saveCrossChainSession(ctx.from.id, {
       step: "awaiting_amount",
       chainId,
-      chainName: chainId,
+      chainName: CHAIN_NAMES[chainId] ?? chainId,
       tokenAddress,
       tokenSymbol,
       tokenDecimals,
