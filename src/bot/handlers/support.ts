@@ -121,7 +121,11 @@ async function checkSupportRateLimit(telegramId: number): Promise<boolean> {
 async function loadHistory(telegramId: number): Promise<ModelMessage[]> {
   try {
     const raw = await redis.get(`support:history:${telegramId}`);
-    return raw ? (JSON.parse(raw) as ModelMessage[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ModelMessage[];
+    // Strip tool-call and tool-result messages to avoid validation errors
+    // when history references tools from a previous session
+    return parsed.filter((m) => m.role === "user" || m.role === "assistant");
   } catch {
     return [];
   }
@@ -273,26 +277,39 @@ export async function handleSupportQuestion(
   const apiKey = config.GROQ_API_KEY;
   if (!apiKey) return FALLBACK;
 
-  try {
-    const history = await loadHistory(telegramId);
-    const messages: ModelMessage[] = [...history, { role: "user", content: question }];
+  const history = await loadHistory(telegramId);
+  const messages: ModelMessage[] = [...history, { role: "user", content: question }];
+  const groq = createGroq({ apiKey });
 
-    const groq = createGroq({ apiKey });
-    const { text } = await generateText({
-      model: groq("llama-3.3-70b-versatile"),
-      system: SYSTEM_PROMPT,
-      messages,
-      tools: buildTools(telegramId),
-      stopWhen: stepCountIs(5),
-      maxOutputTokens: 300,
+  const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+  let lastError: unknown;
 
-    });
+  for (const modelId of models) {
+    try {
+      const { text } = await generateText({
+        model: groq(modelId),
+        system: SYSTEM_PROMPT,
+        messages,
+        tools: buildTools(telegramId),
+        stopWhen: stepCountIs(5),
+        maxOutputTokens: 300,
+      });
 
-    const reply = text.trim() || FALLBACK;
-    await saveHistory(telegramId, [...messages, { role: "assistant", content: reply }]);
-    return reply;
-  } catch (error) {
-    console.error("[support] error:", error instanceof Error ? error.message : String(error));
-    return FALLBACK;
+      const reply = text.trim() || FALLBACK;
+      await saveHistory(telegramId, [...messages, { role: "assistant", content: reply }]);
+      return reply;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      lastError = error;
+      // Only fall through to next model on rate limit errors
+      if (!msg.includes("Rate limit") && !msg.includes("rate_limit")) {
+        console.error("[support] error:", msg);
+        return FALLBACK;
+      }
+      console.error(`[support] rate limit on ${modelId}, trying fallback`);
+    }
   }
+
+  console.error("[support] all models rate limited:", lastError instanceof Error ? lastError.message : String(lastError));
+  return FALLBACK;
 }
