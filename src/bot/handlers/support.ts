@@ -1,5 +1,5 @@
 import { createGroq } from "@ai-sdk/groq";
-import { generateText, tool, type CoreMessage } from "ai";
+import { generateText, tool, stepCountIs, type ModelMessage } from "ai";
 import { z } from "zod";
 
 import { getBalance } from "../../db/balances.ts";
@@ -117,16 +117,16 @@ async function checkSupportRateLimit(telegramId: number): Promise<boolean> {
   }
 }
 
-async function loadHistory(telegramId: number): Promise<CoreMessage[]> {
+async function loadHistory(telegramId: number): Promise<ModelMessage[]> {
   try {
     const raw = await redis.get(`support:history:${telegramId}`);
-    return raw ? (JSON.parse(raw) as CoreMessage[]) : [];
+    return raw ? (JSON.parse(raw) as ModelMessage[]) : [];
   } catch {
     return [];
   }
 }
 
-async function saveHistory(telegramId: number, messages: CoreMessage[]): Promise<void> {
+async function saveHistory(telegramId: number, messages: ModelMessage[]): Promise<void> {
   try {
     const trimmed = messages.slice(-HISTORY_MAX);
     await redis.set(`support:history:${telegramId}`, JSON.stringify(trimmed), "EX", HISTORY_TTL);
@@ -139,7 +139,7 @@ function buildTools(telegramId: number) {
   return {
     getBalance: tool({
       description: "Get the user's current USDC wallet balance in the bot",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         const balance = await getBalance(telegramId);
         return { balance_usdc: balance };
@@ -148,7 +148,7 @@ function buildTools(telegramId: number) {
 
     getWalletAddress: tool({
       description: "Get the user's Solana wallet address and USDC token account",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         const w = await getFantasyWalletByTelegramId(telegramId);
         if (!w) return { error: "No wallet found" };
@@ -158,7 +158,7 @@ function buildTools(telegramId: number) {
 
     getActiveArenas: tool({
       description: "Get arenas the user is currently a member of (open or active)",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_game_members")
@@ -181,7 +181,7 @@ function buildTools(telegramId: number) {
 
     getArenaLeaderboard: tool({
       description: "Get the top 10 leaderboard for a specific arena by its code",
-      parameters: z.object({ code: z.string().describe("The arena code e.g. ABC123") }),
+      inputSchema: z.object({ code: z.string().describe("The arena code e.g. ABC123") }),
       execute: async ({ code }) => {
         const { data: game } = await supabase
           .from("fantasy_games")
@@ -207,7 +207,7 @@ function buildTools(telegramId: number) {
 
     getRecentTrades: tool({
       description: "Get the user's last 5 trades in a specific arena",
-      parameters: z.object({ code: z.string().describe("The arena code") }),
+      inputSchema: z.object({ code: z.string().describe("The arena code") }),
       execute: async ({ code }) => {
         const { data: game } = await supabase
           .from("fantasy_games")
@@ -234,7 +234,7 @@ function buildTools(telegramId: number) {
 
     getDepositHistory: tool({
       description: "Get the user's last 5 USDC deposits",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_wallet_deposits")
@@ -248,7 +248,7 @@ function buildTools(telegramId: number) {
 
     getWithdrawalHistory: tool({
       description: "Get the user's last 5 withdrawal requests",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_wallet_withdrawals")
@@ -274,7 +274,7 @@ export async function handleSupportQuestion(
 
   try {
     const history = await loadHistory(telegramId);
-    const messages: CoreMessage[] = [...history, { role: "user", content: question }];
+    const messages: ModelMessage[] = [...history, { role: "user", content: question }];
 
     const groq = createGroq({ apiKey });
     const { text } = await generateText({
@@ -282,7 +282,7 @@ export async function handleSupportQuestion(
       system: SYSTEM_PROMPT,
       messages,
       tools: buildTools(telegramId),
-      maxSteps: 5,
+      stopWhen: stepCountIs(5),
       maxOutputTokens: 300,
       abortSignal: AbortSignal.timeout(20_000),
     });
