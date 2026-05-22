@@ -715,9 +715,10 @@ export interface CrossChainSession {
   tokenSymbol: string;
   tokenDecimals: number;
   amount?: string;
+  expiresAt?: number; // unix ms
 }
 
-const CROSS_CHAIN_SESSION_TTL_SECONDS = 10 * 60;
+const CROSS_CHAIN_SESSION_TTL_SECONDS = 20 * 60;
 
 function crossChainSessionKey(telegramId: number): string {
   return `cross_chain_session:${telegramId}`;
@@ -727,7 +728,8 @@ export async function saveCrossChainSession(
   telegramId: number,
   state: CrossChainSession
 ): Promise<void> {
-  await redis.set(crossChainSessionKey(telegramId), JSON.stringify(state), "EX", CROSS_CHAIN_SESSION_TTL_SECONDS);
+  const stamped = { ...state, expiresAt: Date.now() + CROSS_CHAIN_SESSION_TTL_SECONDS * 1000 };
+  await redis.set(crossChainSessionKey(telegramId), JSON.stringify(stamped), "EX", CROSS_CHAIN_SESSION_TTL_SECONDS);
 }
 
 export async function loadCrossChainSession(

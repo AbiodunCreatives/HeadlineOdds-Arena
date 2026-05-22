@@ -75,6 +75,12 @@ import {
 } from "../../solana-wallet.ts";
 import { createFantasyPajCashOnramp, getBanks, confirmBankAccount, createFantasyPajCashOfframp, PAJCASH_OFFRAMP_MIN_USDC } from "../../pajcash.ts";
 import { getDextopusTokens, getDextopusDepositStatus } from "../../dextopus.ts";
+import {
+  handleCrossChainCallback,
+  buildCrossChainAmountPromptKeyboard,
+  buildCrossChainConfirmText,
+  buildCrossChainConfirmKeyboard,
+} from "./crosschain.ts";
 import { isDevUser } from "../../utils/devOverrides.ts";
 import { handleSupportQuestion } from "./support.ts";
 
@@ -105,33 +111,9 @@ const WALLET_NAIRA_BACK = "wallet:naira:back";
 const WALLET_WITHDRAW_HELP = "wallet:withdraw";
 const WALLET_BACK = "wallet:back";
 const WALLET_CROSS_CHAIN = "wallet:cross";
-const CC_CHAIN_PREFIX  = "cc:chain:";
-const CC_TOKEN_PREFIX  = "cc:token:";
-const CC_CONFIRM       = "cc:confirm";
-const CC_CANCEL        = "cc:cancel";
-const CC_STATUS_PREFIX = "cc:status:";
 const ARENA_CREATE_CUSTOM = "arena:create:custom";
 const WALLET_NAIRA_MIN_AMOUNT = 1_000;
 
-const CHAIN_NAMES: Record<string, string> = {
-  "1": "Ethereum",
-  "56": "BNB Chain",
-  "137": "Polygon",
-  "42161": "Arbitrum",
-  "10": "Optimism",
-  "8453": "Base",
-  "43114": "Avalanche",
-  "250": "Fantom",
-  "100": "Gnosis",
-  "1101": "Polygon zkEVM",
-  "324": "zkSync Era",
-  "59144": "Linea",
-  "534352": "Scroll",
-  "81457": "Blast",
-  "7777777": "Zora",
-  "792703809": "Solana",
-  "728126428": "Tron",
-};
 const WALLET_NAIRA_MAX_AMOUNT = 20_000;
 const WALLET_NAIRA_PRESET_AMOUNTS = [1_000, 2_000, 5_000, 10_000] as const;
 
@@ -809,118 +791,6 @@ function buildWalletCrossChainResultText(input: {
     "Once your transaction confirms, USDC will appear in your wallet automatically.",
     "Use /wallet to check your balance.",
   ].join("\n");
-}
-
-// ── Cross-chain guided flow UI ────────────────────────────────────────────────
-
-function buildCrossChainChainPickerText(): string {
-  return "🌐 Deposit from Another Chain\n\nSelect the chain you're sending from:";
-}
-
-function buildCrossChainChainPickerKeyboard(
-  chains: Array<{ chainId: number | string; name: string }>,
-  page: number
-): InlineKeyboard {
-  const PAGE_SIZE = 8;
-  const start = page * PAGE_SIZE;
-  const slice = chains.slice(start, start + PAGE_SIZE);
-  const kb = new InlineKeyboard();
-  for (let i = 0; i < slice.length; i += 2) {
-    for (const c of slice.slice(i, i + 2)) {
-      const label = String(c.name).slice(0, 20);
-      kb.text(label, `${CC_CHAIN_PREFIX}${c.chainId}:${encodeURIComponent(label)}`);
-    }
-    kb.row();
-  }
-  if (page > 0 || start + PAGE_SIZE < chains.length) {
-    if (page > 0) kb.text("◀ Prev", `cc:chains:page:${page - 1}`);
-    if (start + PAGE_SIZE < chains.length) kb.text("Next ▶", `cc:chains:page:${page + 1}`);
-    kb.row();
-  }
-  kb.text("← Back", WALLET_BACK);
-  return kb;
-}
-
-function buildCrossChainTokenPickerKeyboard(
-  tokens: Array<{ address: string; symbol: string; decimals: number }>,
-  chainId: string,
-  chainName: string
-): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  const limit = Math.min(tokens.length, 16);
-  for (let i = 0; i < limit; i += 3) {
-    for (let j = i; j < Math.min(i + 3, limit); j++) {
-      kb.text(tokens[j].symbol, `${CC_TOKEN_PREFIX}${chainId}:${j}`);
-    }
-    kb.row();
-  }
-  kb.text("← Back", `cc:chains:page:0`);
-  return kb;
-}
-
-function buildCrossChainAmountPromptKeyboard(): InlineKeyboard {
-  return new InlineKeyboard().text("❌ Cancel", CC_CANCEL);
-}
-
-function buildCrossChainConfirmText(session: CrossChainSession): string {
-  return [
-    "🌐 Confirm Cross-Chain Deposit",
-    "",
-    `Sending:  ${session.amount} ${session.tokenSymbol}`,
-    `Chain:    ${session.chainName}`,
-    "",
-    "A deposit address will be generated. Send exactly this amount to it.",
-    "USDC arrives in your in-bot wallet automatically after confirmation.",
-  ].join("\n");
-}
-
-function buildCrossChainConfirmKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("✅ Get deposit address", CC_CONFIRM)
-    .text("❌ Cancel", CC_CANCEL);
-}
-
-function buildCrossChainDepositAddressText(input: {
-  depositAddress: string;
-  originSymbol: string;
-  expectedUsdcOut: number;
-  expiresInSeconds: number;
-}): string {
-  return [
-    "🌐 Cross-Chain Deposit Address",
-    "",
-    `Send your ${input.originSymbol} to:`,
-    input.depositAddress,
-    "",
-    `Expected credit: ~${formatUsdc(input.expectedUsdcOut)}`,
-    `Expires in: ${Math.round(input.expiresInSeconds / 60)} min`,
-    "",
-    "USDC arrives automatically once your transaction confirms.",
-  ].join("\n");
-}
-
-function buildCrossChainDepositAddressKeyboard(depositRequestId: string): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("🔄 Check status", `${CC_STATUS_PREFIX}${depositRequestId}`)
-    .row()
-    .text("💳 Wallet", WALLET_OPEN)
-    .text("🏟 Arenas", WALLET_BACK);
-}
-
-function buildCrossChainStatusText(input: {
-  status: string;
-  executionStatus: string;
-  originTxs: string[];
-  destTxs: string[];
-}): string {
-  const emoji: Record<string, string> = { pending: "⏳", processing: "🔄", completed: "✅", expired: "❌", failed: "❌" };
-  const lines = [
-    `${emoji[input.status.toLowerCase()] ?? "ℹ️"} Status: ${input.status}`,
-    `Execution: ${input.executionStatus}`,
-  ];
-  if (input.originTxs[0]) lines.push(`Origin tx: ${input.originTxs[0]}`);
-  if (input.destTxs[0]) lines.push(`Dest tx: ${input.destTxs[0]}`);
-  return lines.join("\n");
 }
 
 function buildWalletNairaHelpText(): string {
@@ -2082,149 +1952,18 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     return;
   }
 
-  if (data === WALLET_CROSS_CHAIN) {
+  if (data === WALLET_CROSS_CHAIN || data.startsWith("cc:")) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
-    await clearCrossChainSession(ctx.from.id);
-    try {
-      const tokens = await getDextopusTokens();
-      const chainMap = new Map<string, { chainId: number | string; name: string }>();
-      for (const t of tokens) {
-        const key = String(t.chainId);
-        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: CHAIN_NAMES[key] ?? key });
-      }
-      const chains = Array.from(chainMap.values());
-      await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(chains, 0));
-    } catch {
-      await editTradePromptMessage(ctx, "Failed to load chains. Please try again.", buildWalletKeyboard());
-    }
-    return;
-  }
-
-  if (data.startsWith("cc:chains:page:")) {
-    const page = parseInt(data.replace("cc:chains:page:", ""), 10) || 0;
-    try {
-      const tokens = await getDextopusTokens();
-      const chainMap = new Map<string, { chainId: number | string; name: string }>();
-      for (const t of tokens) {
-        const key = String(t.chainId);
-        if (!chainMap.has(key)) chainMap.set(key, { chainId: t.chainId, name: CHAIN_NAMES[key] ?? key });
-      }
-      await editTradePromptMessage(ctx, buildCrossChainChainPickerText(), buildCrossChainChainPickerKeyboard(Array.from(chainMap.values()), page));
-    } catch {
-      await editTradePromptMessage(ctx, "Failed to load chains. Please try again.", buildWalletKeyboard());
-    }
-    return;
-  }
-
-  if (data.startsWith(CC_CHAIN_PREFIX)) {
-    const parts = data.slice(CC_CHAIN_PREFIX.length).split(":");
-    const chainId = parts[0] ?? "";
-    const chainName = decodeURIComponent(parts[1] ?? chainId);
-    try {
-      const tokens = await getDextopusTokens();
-      const chainTokens = tokens.filter((t) => String(t.chainId) === chainId);
-      if (chainTokens.length === 0) {
-        await editTradePromptMessage(ctx, "No tokens available for this chain.", buildCrossChainChainPickerKeyboard([], 0));
-        return;
-      }
-      await editTradePromptMessage(
-        ctx,
-        `🌐 Select Token — ${chainName}\n\nWhich token are you sending?`,
-        buildCrossChainTokenPickerKeyboard(chainTokens, chainId, chainName)
-      );
-    } catch {
-      await editTradePromptMessage(ctx, "Failed to load tokens. Please try again.", buildWalletKeyboard());
-    }
-    return;
-  }
-
-  if (data.startsWith(CC_TOKEN_PREFIX)) {
-    const [chainId, indexStr] = data.slice(CC_TOKEN_PREFIX.length).split(":");
-    if (!chainId || indexStr === undefined) return;
-    const tokenIndex = parseInt(indexStr, 10);
-    const allTokens = await getDextopusTokens();
-    const chainTokens = allTokens.filter((t) => String(t.chainId) === chainId);
-    const token = chainTokens[tokenIndex];
-    if (!token) {
-      await editTradePromptMessage(ctx, "Token not found. Please try again.", buildWalletKeyboard());
-      return;
-    }
-    const { address: tokenAddress, symbol: tokenSymbol, decimals: tokenDecimals } = token;
-    await saveCrossChainSession(ctx.from.id, {
-      step: "awaiting_amount",
-      chainId,
-      chainName: CHAIN_NAMES[chainId] ?? chainId,
-      tokenAddress,
-      tokenSymbol,
-      tokenDecimals,
-    });
-    await editTradePromptMessage(
-      ctx,
-      `🌐 How much ${tokenSymbol} are you sending?\n\nType the amount, e.g. 10`,
-      buildCrossChainAmountPromptKeyboard()
+    const handled = await handleCrossChainCallback(
+      ctx, data,
+      (text, kb) => editTradePromptMessage(ctx, text, kb),
+      buildWalletKeyboard(),
+      WALLET_BACK,
+      WALLET_OPEN,
+      renderWalletView,
     );
-    return;
+    if (handled) return;
   }
-
-  if (data === CC_CONFIRM) {
-    const session = await loadCrossChainSession(ctx.from.id);
-    if (!session || session.step !== "pending_confirm" || !session.amount) {
-      await editTradePromptMessage(ctx, "Session expired. Please start again.", buildWalletKeyboard());
-      return;
-    }
-    try {
-      const amountRaw = BigInt(Math.round(Number(session.amount) * 10 ** session.tokenDecimals)).toString();
-      const result = await createCrossChainDeposit({
-        telegramId: ctx.from.id,
-        originChainId: session.chainId,
-        originAsset: session.tokenAddress,
-        originSymbol: session.tokenSymbol,
-        amountRaw,
-      });
-      await clearCrossChainSession(ctx.from.id);
-      await editTradePromptMessage(
-        ctx,
-        buildCrossChainDepositAddressText({
-          depositAddress: result.depositAddress,
-          originSymbol: session.tokenSymbol,
-          expectedUsdcOut: result.expectedUsdcOut,
-          expiresInSeconds: result.expiresInSeconds,
-        }),
-        buildCrossChainDepositAddressKeyboard(result.depositRequestId)
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Something went wrong.";
-      await editTradePromptMessage(ctx, `Cross-chain deposit failed: ${msg}`, buildWalletKeyboard());
-    }
-    return;
-  }
-
-  if (data === CC_CANCEL) {
-    await clearCrossChainSession(ctx.from.id);
-    await renderWalletView(ctx, ctx.from.id, { refresh: false });
-    return;
-  }
-
-  if (data.startsWith(CC_STATUS_PREFIX)) {
-    const depositRequestId = data.slice(CC_STATUS_PREFIX.length);
-    try {
-      const status = await getDextopusDepositStatus(depositRequestId);
-      await editTradePromptMessage(
-        ctx,
-        buildCrossChainStatusText({
-          status: status.status,
-          executionStatus: status.executionStatus,
-          originTxs: status.originTransactionHashes,
-          destTxs: status.destinationTransactionHashes,
-        }),
-        buildCrossChainDepositAddressKeyboard(depositRequestId)
-      );
-    } catch {
-      await editTradePromptMessage(ctx, "Could not fetch deposit status. Please try again.", buildCrossChainDepositAddressKeyboard(depositRequestId));
-    }
-    return;
-  }
-
 
   if (data === WALLET_NAIRA_HELP) {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
