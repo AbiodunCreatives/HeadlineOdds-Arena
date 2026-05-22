@@ -1785,7 +1785,7 @@ function renderLeaderboardText(input: {
     input.leaderboard.length === 0
       ? ["No players yet."]
       : input.leaderboard.slice(0, 10).map((entry, index) => {
-          const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId);
+          const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId, entry.username);
           const badges =
             index === 0
               ? "  🔥"
@@ -1828,7 +1828,7 @@ function buildFinalArenaMessage(input: {
   const standings = input.leaderboard.map((entry) => {
     const medal =
       entry.place === 1 ? "🥇" : entry.place === 2 ? "🥈" : entry.place === 3 ? "🥉" : "  ";
-    const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId);
+    const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId, entry.username);
     const payoutText =
       entry.prize_awarded > 0 ? formatMoney(entry.prize_awarded) : "—";
 
@@ -1966,7 +1966,7 @@ export async function listFantasyArenaLobby(): Promise<FantasyArenaLobbySnapshot
       game,
       memberCount: leaderboard.length,
       state,
-      topLeaderName: leader ? anonymizePlayer(leader.telegram_id) : null,
+      topLeaderName: leader ? anonymizePlayer(leader.telegram_id, undefined, leader.username) : null,
       topLeaderReturnPct: leader
         ? getVirtualReturnPct(game, leader.virtual_balance)
         : null,
@@ -2373,7 +2373,7 @@ export async function getFantasyLeagueJoinPreview(
     memberCount: leaderboard.length,
     projectedPrizePool,
     projectedFirstPrize: getFirstPrizeProjection(projectedPrizePool, leaderboard.length + 1),
-    currentLeaderName: leader ? anonymizePlayer(leader.telegram_id, telegramId) : null,
+    currentLeaderName: leader ? anonymizePlayer(leader.telegram_id, telegramId, leader.username) : null,
     currentLeaderReturnPct: leader
       ? getVirtualReturnPct(game, leader.virtual_balance)
       : null,

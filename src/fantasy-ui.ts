@@ -103,10 +103,15 @@ export function getVirtualReturnPct(
 
 export function anonymizePlayer(
   telegramId: number,
-  viewerTelegramId?: number
+  viewerTelegramId?: number,
+  username?: string | null
 ): string {
   if (viewerTelegramId !== undefined && telegramId === viewerTelegramId) {
     return "you";
+  }
+
+  if (username?.trim()) {
+    return username.trim();
   }
 
   const digest = createHash("sha256")

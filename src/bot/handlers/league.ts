@@ -1845,7 +1845,7 @@ async function renderCatchUpView(
     ctx,
     buildCatchUpText({
       code,
-      leaderName: anonymizePlayer(leader.telegram_id, telegramId),
+      leaderName: anonymizePlayer(leader.telegram_id, telegramId, leader.username),
       gap,
       suggestedStake,
       requiredReturnMultiple,
