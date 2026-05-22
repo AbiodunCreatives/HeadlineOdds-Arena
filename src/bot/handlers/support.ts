@@ -139,7 +139,7 @@ function buildTools(telegramId: number) {
   return {
     getBalance: tool({
       description: "Get the user's current USDC wallet balance in the bot",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ _: z.string().optional() }),
       execute: async () => {
         const balance = await getBalance(telegramId);
         return { balance_usdc: balance };
@@ -148,7 +148,7 @@ function buildTools(telegramId: number) {
 
     getWalletAddress: tool({
       description: "Get the user's Solana wallet address and USDC token account",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ _: z.string().optional() }),
       execute: async () => {
         const w = await getFantasyWalletByTelegramId(telegramId);
         if (!w) return { error: "No wallet found" };
@@ -158,7 +158,7 @@ function buildTools(telegramId: number) {
 
     getActiveArenas: tool({
       description: "Get arenas the user is currently a member of (open or active)",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ _: z.string().optional() }),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_game_members")
@@ -234,7 +234,7 @@ function buildTools(telegramId: number) {
 
     getDepositHistory: tool({
       description: "Get the user's last 5 USDC deposits",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ _: z.string().optional() }),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_wallet_deposits")
@@ -248,7 +248,7 @@ function buildTools(telegramId: number) {
 
     getWithdrawalHistory: tool({
       description: "Get the user's last 5 withdrawal requests",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ _: z.string().optional() }),
       execute: async () => {
         const { data } = await supabase
           .from("fantasy_wallet_withdrawals")
@@ -284,7 +284,7 @@ export async function handleSupportQuestion(
       tools: buildTools(telegramId),
       stopWhen: stepCountIs(5),
       maxOutputTokens: 300,
-      abortSignal: AbortSignal.timeout(20_000),
+
     });
 
     const reply = text.trim() || FALLBACK;
