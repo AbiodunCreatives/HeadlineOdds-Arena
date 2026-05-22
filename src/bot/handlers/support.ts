@@ -1,5 +1,5 @@
-import { createGroq } from "@ai-sdk/groq";
 import { generateText, tool, stepCountIs, type ModelMessage } from "ai";
+import { createGroq } from "@ai-sdk/groq";
 import { z } from "zod";
 
 import { getBalance } from "../../db/balances.ts";
