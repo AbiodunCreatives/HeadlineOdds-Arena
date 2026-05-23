@@ -42,46 +42,27 @@ async function fetchKlines(interval: string, limit: number): Promise<number[]> {
 
 // ── Signal: momentum ──────────────────────────────────────────────────────────
 
-/**
- * Simple linear regression slope over last `n` closes, normalised to [-1,+1].
- * Uses 4 x 15m candles = 1 hour lookback.
- */
-export async function momentumSignal(): Promise<number> {
-  const closes = await fetchKlines("15m", 5);
+function calcMomentum(closes: number[]): number {
   if (closes.length < 2) return 0;
-  const n = closes.length;
   const first = closes[0]!;
-  const last = closes[n - 1]!;
-  const pctChange = (last - first) / first; // e.g. 0.003 = +0.3%
-  // Clamp to ±1% range → maps to [-1, +1]
-  return Math.max(-1, Math.min(1, pctChange / 0.01));
+  const last = closes[closes.length - 1]!;
+  return Math.max(-1, Math.min(1, (last - first) / first / 0.01));
 }
 
 // ── Signal: RSI ───────────────────────────────────────────────────────────────
 
-/**
- * RSI(14) on 15m candles, normalised:
- *   RSI > 70 → overbought → negative signal (fade)
- *   RSI < 30 → oversold  → positive signal (buy)
- *   RSI 40–60 → neutral
- */
-export async function rsiSignal(): Promise<number> {
-  const closes = await fetchKlines("15m", 16); // 15 diffs for RSI(14)
+function calcRsi(closes: number[]): number {
   if (closes.length < 15) return 0;
-
   const diffs = closes.slice(1).map((c, i) => c - closes[i]!);
   const gains = diffs.map((d) => Math.max(0, d));
   const losses = diffs.map((d) => Math.max(0, -d));
   const avgGain = gains.reduce((s, v) => s + v, 0) / gains.length;
   const avgLoss = losses.reduce((s, v) => s + v, 0) / losses.length;
-  if (avgLoss === 0) return -1; // all gains = overbought
-  const rs = avgGain / avgLoss;
-  const rsi = 100 - 100 / (1 + rs);
-
-  // Map: RSI 70→100 = -1 (overbought), RSI 0→30 = +1 (oversold), 50 = 0
-  if (rsi >= 70) return -((rsi - 70) / 30); // 0 to -1
-  if (rsi <= 30) return (30 - rsi) / 30;    // 0 to +1
-  return -(rsi - 50) / 20;                  // gentle slope around neutral
+  if (avgLoss === 0) return -1;
+  const rsi = 100 - 100 / (1 + avgGain / avgLoss);
+  if (rsi >= 70) return -((rsi - 70) / 30);
+  if (rsi <= 30) return (30 - rsi) / 30;
+  return -(rsi - 50) / 20;
 }
 
 // ── Signal: odds drift ────────────────────────────────────────────────────────
@@ -103,9 +84,11 @@ export async function getMarketSignals(
   currentUpPrice: number,
   previousUpPrice: number | null
 ): Promise<MarketSignals> {
-  const [momentum, rsi] = await Promise.all([momentumSignal(), rsiSignal()]);
+  // Single fetch covers both momentum (needs 5) and RSI (needs 16)
+  const closes = await fetchKlines("15m", 16);
+  const momentum = calcMomentum(closes);
+  const rsi = calcRsi(closes);
   const oddsDrift = oddsDriftSignal(currentUpPrice, previousUpPrice);
-  // Weighted composite: momentum 40%, rsi 30%, odds drift 30%
   const composite = momentum * 0.4 + rsi * 0.3 + oddsDrift * 0.3;
   return { momentum, rsi, oddsDrift, composite };
 }

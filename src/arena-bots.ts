@@ -8,7 +8,6 @@ import {
   listFantasyGameMembers,
   placeFantasyTradeWithDebit,
   type FantasyGame,
-  type FantasyGameMember,
 } from "./db/fantasy.ts";
 import { getTradeQuote } from "./bayse-market.ts";
 import { FANTASY_TRADE_AMOUNTS, roundMoney } from "./fantasy-league.ts";
@@ -225,152 +224,115 @@ export async function seedBotsIntoFreeTrialGame(game: FantasyGame): Promise<void
   }
 }
 
-// ── Auto-trade ────────────────────────────────────────────────────────────────
+// ── Auto-trade (shared core) ──────────────────────────────────────────────────
+
+interface TradeCandidate {
+  telegramId: number;
+  memberId: string;
+  style: BotStyle;
+  virtualBalance: number;
+  label: string; // for logging
+}
 
 /**
- * Called each round for a free trial game.
- * Fetches live market signals once, then each bot decides independently.
+ * Shared trade execution for both AI bots and player agents.
+ * Batches the "already traded?" check into a single IN query, then
+ * fires all trades in parallel.
  */
+async function runTradesForCandidates(
+  game: FantasyGame,
+  pricing: RoundPricing,
+  candidates: TradeCandidate[],
+  signals: MarketSignals
+): Promise<void> {
+  if (candidates.length === 0) return;
+
+  // Single query: which telegram_ids already have a trade this round?
+  const telegramIds = candidates.map((c) => c.telegramId);
+  const { data: existingTrades } = await supabase
+    .from("fantasy_trades")
+    .select("telegram_id")
+    .eq("game_id", game.id)
+    .eq("event_id", pricing.eventId)
+    .in("telegram_id", telegramIds);
+  const alreadyTraded = new Set((existingTrades ?? []).map((r) => r.telegram_id));
+
+  await Promise.all(
+    candidates
+      .filter((c) => !alreadyTraded.has(c.telegramId))
+      .map(async (c) => {
+        try {
+          const { direction, stake } = botDecision(c.style, pricing, c.virtualBalance, signals);
+          if (c.virtualBalance < stake) return;
+
+          const outcomeId = direction === "UP" ? pricing.upOutcomeId : pricing.downOutcomeId;
+          if (!outcomeId) return;
+
+          const quote = await getTradeQuote({
+            eventId: pricing.eventId, marketId: pricing.marketId,
+            outcomeId, amount: stake, currency: "USD",
+          });
+          if (!quote) return;
+
+          const entryPrice = direction === "UP" ? pricing.upPrice : pricing.downPrice;
+          const shares = roundMoney(quote.quantity ?? stake / Math.max(0.01, entryPrice));
+
+          await placeFantasyTradeWithDebit({
+            gameId: game.id, memberId: c.memberId, telegramId: c.telegramId,
+            eventId: pricing.eventId, marketId: pricing.marketId,
+            direction, stake, entryPrice, shares,
+          });
+        } catch (error) {
+          console.warn(`[arena-bots] Trade failed for ${c.label} in arena ${game.code}:`, error);
+        }
+      })
+  );
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/** Free trial arenas: AI bots auto-trade each round. */
 export async function runBotTradesForRound(
   game: FantasyGame,
   pricing: RoundPricing,
   previousUpPrice: number | null = null
 ): Promise<void> {
-  const bots = await loadArenaBots();
+  const [bots, members, signals] = await Promise.all([
+    loadArenaBots(),
+    listFantasyGameMembers(game.id),
+    getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
+      momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
+    })),
+  ]);
 
-  // Fetch signals once for all bots (shared market view)
-  const signals = await getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
-    momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
-  }));
+  const memberMap = new Map(members.map((m) => [m.telegram_id, m]));
+  const candidates: TradeCandidate[] = bots.flatMap((bot) => {
+    const m = memberMap.get(bot.telegram_id);
+    if (!m) return [];
+    return [{ telegramId: bot.telegram_id, memberId: m.id, style: bot.style as BotStyle, virtualBalance: m.virtual_balance, label: `bot:${bot.style}` }];
+  });
 
-  await Promise.all(
-    bots.map(async (bot) => {
-      try {
-        const member = await getFantasyGameMember(game.id, bot.telegram_id);
-        if (!member) return;
-
-        // Skip if already traded this round
-        const { count } = await supabase
-          .from("fantasy_trades")
-          .select("id", { count: "exact", head: true })
-          .eq("game_id", game.id)
-          .eq("telegram_id", bot.telegram_id)
-          .eq("event_id", pricing.eventId);
-        if ((count ?? 0) > 0) return;
-
-        const { direction, stake } = botDecision(
-          bot.style as BotStyle,
-          pricing,
-          member.virtual_balance,
-          signals
-        );
-        if (member.virtual_balance < stake) return;
-
-        const outcomeId = direction === "UP" ? pricing.upOutcomeId : pricing.downOutcomeId;
-        if (!outcomeId) return;
-
-        const quote = await getTradeQuote({
-          eventId: pricing.eventId,
-          marketId: pricing.marketId,
-          outcomeId,
-          amount: stake,
-          currency: "USD",
-        });
-        if (!quote) return;
-
-        const entryPrice = direction === "UP" ? pricing.upPrice : pricing.downPrice;
-        const shares = roundMoney(quote.quantity ?? stake / Math.max(0.01, entryPrice));
-
-        await placeFantasyTradeWithDebit({
-          gameId: game.id,
-          memberId: member.id,
-          telegramId: bot.telegram_id,
-          eventId: pricing.eventId,
-          marketId: pricing.marketId,
-          direction,
-          stake,
-          entryPrice,
-          shares,
-        });
-      } catch (error) {
-        console.warn(`[arena-bots] Bot ${bot.telegram_id} (${bot.style}) failed round ${pricing.eventId}:`, error);
-      }
-    })
-  );
+  await runTradesForCandidates(game, pricing, candidates, signals);
 }
 
-
-// ── Player-owned agent auto-trade ─────────────────────────────────────────────
-
-/**
- * For paid arenas: auto-trade on behalf of members who have agent_style set.
- * Called each round alongside (or instead of) the free-trial bot pass.
- */
+/** Paid arenas: members with agent_style set auto-trade each round. */
 export async function runAgentTradesForRound(
   game: FantasyGame,
   pricing: RoundPricing,
   previousUpPrice: number | null = null
 ): Promise<void> {
-  const members = await listFantasyGameMembers(game.id);
-  const agentMembers = members.filter(
-    (m): m is FantasyGameMember & { agent_style: string } =>
-      m.agent_style !== null && m.telegram_id > 0
+  const [members, signals] = await Promise.all([
+    listFantasyGameMembers(game.id),
+    getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
+      momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
+    })),
+  ]);
+
+  const candidates: TradeCandidate[] = members.flatMap((m) =>
+    m.agent_style && m.telegram_id > 0
+      ? [{ telegramId: m.telegram_id, memberId: m.id, style: m.agent_style as BotStyle, virtualBalance: m.virtual_balance, label: `agent:${m.agent_style}` }]
+      : []
   );
-  if (agentMembers.length === 0) return;
 
-  const signals = await getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
-    momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
-  }));
-
-  await Promise.all(
-    agentMembers.map(async (member) => {
-      try {
-        // Skip if already traded this round
-        const { count } = await supabase
-          .from("fantasy_trades")
-          .select("id", { count: "exact", head: true })
-          .eq("game_id", game.id)
-          .eq("telegram_id", member.telegram_id)
-          .eq("event_id", pricing.eventId);
-        if ((count ?? 0) > 0) return;
-
-        const { direction, stake } = botDecision(
-          member.agent_style as BotStyle,
-          pricing,
-          member.virtual_balance,
-          signals
-        );
-        if (member.virtual_balance < stake) return;
-
-        const outcomeId = direction === "UP" ? pricing.upOutcomeId : pricing.downOutcomeId;
-        if (!outcomeId) return;
-
-        const quote = await getTradeQuote({
-          eventId: pricing.eventId,
-          marketId: pricing.marketId,
-          outcomeId,
-          amount: stake,
-          currency: "USD",
-        });
-        if (!quote) return;
-
-        const entryPrice = direction === "UP" ? pricing.upPrice : pricing.downPrice;
-        const shares = roundMoney(quote.quantity ?? stake / Math.max(0.01, entryPrice));
-
-        await placeFantasyTradeWithDebit({
-          gameId: game.id,
-          memberId: member.id,
-          telegramId: member.telegram_id,
-          eventId: pricing.eventId,
-          marketId: pricing.marketId,
-          direction,
-          stake,
-          entryPrice,
-          shares,
-        });
-      } catch (error) {
-        console.warn(`[arena-bots] Agent trade failed for member ${member.telegram_id} (${member.agent_style}) in arena ${game.code}:`, error);
-      }
-    })
-  );
+  await runTradesForCandidates(game, pricing, candidates, signals);
 }
