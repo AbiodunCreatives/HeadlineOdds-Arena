@@ -47,9 +47,6 @@ importers:
       ioredis:
         specifier: ^5.10.0
         version: 5.10.0
-      jose:
-        specifier: ^5.10.0
-        version: 5.10.0
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -66,9 +63,6 @@ importers:
       '@types/node':
         specifier: ^25.3.3
         version: 25.5.0
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
       eslint:
         specifier: ^9.39.4
         version: 9.39.4
@@ -1362,9 +1356,6 @@ packages:
     resolution: {integrity: sha512-AauzHcUcqs8OBnCHOkJY280VaTiCm57AbuO7lqzcw7JapGj50BisE3xhksye4zlTSR1+1tAz67wLTl8tEH1obQ==}
     engines: {node: '>=8'}
     hasBin: true
-
-  jose@5.10.0:
-    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
 
   js-yaml@4.1.1:
     resolution: {integrity: sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==}
@@ -3311,8 +3302,6 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
-
-  jose@5.10.0: {}
 
   js-yaml@4.1.1:
     dependencies:
