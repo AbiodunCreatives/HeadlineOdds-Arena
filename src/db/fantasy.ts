@@ -441,7 +441,7 @@ export async function getActiveArenaForUser(
 ): Promise<FantasyGame | null> {
   const { data, error } = await supabase
     .from("fantasy_game_members")
-    .select("game_id, fantasy_games!inner(id, status, end_at, code, entry_fee, creator_telegram_id, start_at, virtual_start_balance, commission_rate, prize_pool)")
+    .select("game_id, fantasy_games!inner(id, status, end_at, code, entry_fee, creator_telegram_id, start_at, virtual_start_balance, prize_pool)")
     .eq("telegram_id", telegramId)
     .in("fantasy_games.status", ["open", "active"])
     .limit(1)
