@@ -458,12 +458,31 @@ function buildAgentPickerText(entryFee: number, durationHours: number): string {
 
 function buildAgentPickerKeyboard(entryFee: number, durationHours: number): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (const style of AGENT_STYLES) {
-    kb.text(AGENT_DISPLAY_NAMES[style], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${style}`).row();
-  }
-  kb.text("🙋 Trade myself", `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:none`)
-    .row()
+  const styles = [...AGENT_STYLES];
+  
+  // Row 1: First 3 agents
+  kb.text(AGENT_DISPLAY_NAMES[styles[0]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[0]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[1]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[1]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[2]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[2]}`)
+    .row();
+    
+  // Row 2: Next 3 agents  
+  kb.text(AGENT_DISPLAY_NAMES[styles[3]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[3]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[4]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[4]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[5]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[5]}`)
+    .row();
+    
+  // Row 3: Next 3 agents
+  kb.text(AGENT_DISPLAY_NAMES[styles[6]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[6]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[7]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[7]}`)
+    .text(AGENT_DISPLAY_NAMES[styles[8]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[8]}`)
+    .row();
+    
+  // Row 4: Last agent + Trade myself + Back
+  kb.text(AGENT_DISPLAY_NAMES[styles[9]], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${styles[9]}`)
+    .text("🙋 Trade myself", `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:none`)
     .text("← Back", `${ARENA_DURATION_PREFIX}${entryFee}:${durationHours}`);
+    
   return kb;
 }
 
