@@ -47,6 +47,11 @@ import {
   FANTASY_MIN_ENTRY_FEE,
   createFreeTrialArena,
   hasUsedFreeTrial,
+  createAgentArena,
+  joinAgentArena,
+  AGENT_STYLES,
+  AGENT_DISPLAY_NAMES,
+  type AgentStyle,
   type FantasyTradePlacementResult,
   type OfframpSessionState,
 } from "../../fantasy-league.ts";
@@ -93,6 +98,7 @@ const LOBBY_REFRESH = "lobby:refresh";
 const LOBBY_LIVE = "lobby:live";
 const ARENA_CREATE = "arena:create";
 const ARENA_DURATION_PREFIX = "arena:duration:";
+const ARENA_AGENT_PREFIX = "arena:agent:";
 const ARENA_BACK_TO_LOBBY = "arena:lobby";
 const ARENA_LIVE_PREFIX = "arena:live:";
 const ARENA_TRADE_PREFIX = "arena:trade:";
@@ -321,8 +327,8 @@ function buildStartOnboardingText(input: {
   firstName: string;
   balance: number;
 }): string {
-  const name = input.firstName.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-  const balance = input.balance.toFixed(2).replace(/[.]/g, '\\$&');
+  const name = input.firstName.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+  const balance = input.balance.toFixed(2);
   return [
     `🏟 *HeadlineOdds Arena*`,
     "",
@@ -411,6 +417,30 @@ function buildCreateArenaDurationKeyboard(entryFee: number): InlineKeyboard {
     .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY);
 
   return keyboard;
+}
+
+function buildAgentPickerText(entryFee: number, durationHours: number): string {
+  return [
+    "🤖 Pick Your Agent",
+    "",
+    `Entry: $${entryFee}  •  Duration: ${formatDurationHours(durationHours)}`,
+    "",
+    "Your agent will trade automatically each round using live BTC signals.",
+    "You watch the leaderboard — your agent wins or loses real USDC for you.",
+    "",
+    "Choose a strategy:",
+  ].join("\n");
+}
+
+function buildAgentPickerKeyboard(entryFee: number, durationHours: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const style of AGENT_STYLES) {
+    kb.text(AGENT_DISPLAY_NAMES[style], `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:${style}`).row();
+  }
+  kb.text("🙋 Trade myself", `${ARENA_AGENT_PREFIX}${entryFee}:${durationHours}:none`)
+    .row()
+    .text("← Back", `${ARENA_DURATION_PREFIX}${entryFee}:${durationHours}`);
+  return kb;
 }
 
 function buildArenaStatusText(input: {
@@ -1871,7 +1901,7 @@ export async function handleStart(ctx: Context): Promise<void> {
   }
 
   const args = (ctx.message?.text ?? "").split(/\s+/).slice(1);
-  const code = args[0]?.trim().toUpperCase();
+  const code = args[0]?.trim()?.toUpperCase();
 
   if (code) {
     try {
@@ -1884,7 +1914,7 @@ export async function handleStart(ctx: Context): Promise<void> {
   }
 
   const balance = await getBalance(ctx.from.id);
-  const usedTrial = await hasUsedFreeTrial(ctx.from.id);
+  const usedTrial = await hasUsedFreeTrial(ctx.from.id).catch(() => false);
 
   if (balance <= 0) {
     if (!usedTrial) {
@@ -2248,12 +2278,46 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       return;
     }
 
+    await editTradePromptMessage(
+      ctx,
+      buildAgentPickerText(entryFee, durationHours),
+      buildAgentPickerKeyboard(entryFee, durationHours)
+    );
+    return;
+  }
+
+  if (data.startsWith(ARENA_AGENT_PREFIX)) {
+    const parts = data.slice(ARENA_AGENT_PREFIX.length).split(":");
+    const entryFee = Number.parseFloat(parts[0] ?? "");
+    const durationHours = Number.parseInt(parts[1] ?? "", 10);
+    const agentStyle = parts[2] ?? "none";
+
+    if (!Number.isFinite(entryFee) || !Number.isInteger(durationHours)) {
+      await ctx.reply("Something went wrong. Please try again.");
+      return;
+    }
+
     try {
-      await createArenaFromSelection(ctx, ctx.from.id, entryFee, durationHours);
+      if (agentStyle !== "none" && (AGENT_STYLES as readonly string[]).includes(agentStyle)) {
+        const game = await createAgentArena(ctx.from.id, entryFee, durationHours, agentStyle as AgentStyle);
+        const shareUrl = await getArenaInviteShareUrl(ctx, { code: game.code, entryFee: game.entry_fee });
+        await editTradePromptMessage(
+          ctx,
+          buildFantasyCreateSuccessText({
+            code: game.code,
+            prizePool: game.prize_pool,
+            virtualStack: game.virtual_start_balance,
+            roundsUntilStart: getApproxRoundsUntil(game.start_at),
+            durationHours: getGameDurationHours(game),
+          }),
+          buildFantasyCreateSuccessKeyboard(shareUrl)
+        );
+      } else {
+        await createArenaFromSelection(ctx, ctx.from.id, entryFee, durationHours);
+      }
     } catch (error) {
       await replyFantasyCreateError(ctx, error, entryFee);
     }
-
     return;
   }
 
