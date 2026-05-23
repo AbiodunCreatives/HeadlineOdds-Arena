@@ -19,6 +19,7 @@ export interface FantasyGame {
   created_at: string;
   completed_at: string | null;
   cancelled_at: string | null;
+  is_free_trial: boolean;
 }
 
 export interface FantasyGameMember {
@@ -184,6 +185,7 @@ function normalizeFantasyGame(row: FantasyGameRow): FantasyGame {
     last_round_event_id: row.last_round_event_id ?? null,
     completed_at: row.completed_at ?? null,
     cancelled_at: row.cancelled_at ?? null,
+    is_free_trial: Boolean(row.is_free_trial),
   };
 }
 
@@ -1453,4 +1455,88 @@ export async function listPendingPrizeTransfers(
       transfer_retry_count: r.transfer_retry_count ?? 0,
     };
   });
+}
+
+// ── HLO Points & Free Trial ───────────────────────────────────────────────────
+
+export async function createFreeTrialGame(input: {
+  code: string;
+  creatorTelegramId: number;
+  virtualStartBalance: number;
+  startAt: string;
+  endAt: string;
+}): Promise<FantasyGame> {
+  const { data, error } = await supabase.rpc("create_free_trial_game", {
+    p_code: input.code,
+    p_creator_telegram_id: input.creatorTelegramId,
+    p_virtual_start_balance: roundMoney(input.virtualStartBalance),
+    p_start_at: input.startAt,
+    p_end_at: input.endAt,
+  });
+  if (error) throw error;
+  const row = extractRpcSingleRow(data as FantasyGameRow | FantasyGameRow[] | null | undefined);
+  if (!row) throw new Error("Free trial game not created.");
+  return normalizeFantasyGame(row);
+}
+
+export async function joinFreeTrialGame(input: {
+  code: string;
+  telegramId: number;
+}): Promise<FantasyGame> {
+  const { data, error } = await supabase.rpc("join_free_trial_game", {
+    p_code: input.code,
+    p_telegram_id: input.telegramId,
+  });
+  if (error) throw error;
+  const row = extractRpcSingleRow(data as FantasyGameRow | FantasyGameRow[] | null | undefined);
+  if (!row) throw new Error("Free trial game join failed.");
+  return normalizeFantasyGame(row);
+}
+
+export async function hasUsedFreeTrial(telegramId: number): Promise<boolean> {
+  const { count, error } = await supabase
+    .from("fantasy_games")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_telegram_id", telegramId)
+    .eq("is_free_trial", true);
+
+  if (error) throw error;
+  if ((count ?? 0) > 0) return true;
+
+  // Also check if they joined (but didn't create) a free trial game
+  const { count: joinCount, error: joinError } = await supabase
+    .from("fantasy_game_members")
+    .select("id", { count: "exact", head: true })
+    .eq("telegram_id", telegramId)
+    .eq("entry_fee_paid", 0);
+
+  if (joinError) throw joinError;
+  return (joinCount ?? 0) > 0;
+}
+
+export async function awardHloPoints(input: {
+  telegramId: number;
+  amount: number;
+  reason: string;
+  referenceId?: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from("hlo_points").insert({
+    telegram_id: input.telegramId,
+    amount: input.amount,
+    reason: input.reason,
+    reference_id: input.referenceId ?? null,
+  });
+  if (error) throw error;
+}
+
+export async function getHloPoints(telegramId: number): Promise<number> {
+  const { data, error } = await supabase
+    .from("hlo_points")
+    .select("amount")
+    .eq("telegram_id", telegramId);
+  if (error) throw error;
+  return (data ?? []).reduce(
+    (sum, row) => sum + (typeof row.amount === "number" ? row.amount : Number(row.amount ?? 0)),
+    0
+  );
 }

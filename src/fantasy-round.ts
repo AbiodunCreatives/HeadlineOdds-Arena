@@ -82,6 +82,7 @@ import {
   roundMoney,
   schedulePromptCountdown,
 } from "./fantasy-league.ts";
+import { runBotTradesForRound } from "./arena-bots.ts";
 
 const tgApi = new Api(config.BOT_TOKEN);
 let cachedBotUsername: string | null = null;
@@ -450,6 +451,12 @@ export async function processFantasyLeagueRound(round: Round, pricing: RoundPric
     }));
     if (!deliveryResults.some(Boolean)) { console.warn(`[fantasy] No round prompts delivered for arena ${game.code} on ${pricing.eventId}.`); continue; }
     await updateFantasyGame({ gameId: game.id, lastRoundEventId: pricing.eventId });
+    // Bots auto-trade in free trial arenas
+    if (game.is_free_trial) {
+      runBotTradesForRound(game, pricing).catch((e) => {
+        console.warn(`[arena-bots] Auto-trade failed for arena ${game.code}:`, e);
+      });
+    }
   }
 }
 

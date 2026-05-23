@@ -3,13 +3,17 @@
  */
 import {
   createFantasyGameWithEntry,
+  createFreeTrialGame,
   getActiveArenaForUser,
   getFantasyGameByCode,
   getFantasyGameById,
   getFantasyGameMember,
   getFantasyLeaderboard,
   getLatestFantasyTradeForMember,
+  hasUsedFreeTrial,
   joinFantasyGameWithEntry,
+  joinFreeTrialGame,
+  awardHloPoints,
   listFantasyTradesForGame,
   listUserFantasyGames,
   type FantasyGame,
@@ -57,6 +61,7 @@ import {
   type FantasyGameSnapshot,
 } from "./fantasy-league.ts";
 import { randomBytes } from "crypto";
+import { seedBotsIntoFreeTrialGame } from "./arena-bots.ts";
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -164,6 +169,48 @@ function countRoundsPlayed(trades: import("./db/fantasy.ts").FantasyTrade[]): nu
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
+
+// ── Free Trial Arena ──────────────────────────────────────────────────────────
+
+const FREE_TRIAL_DURATION_HOURS = 1;
+const FREE_TRIAL_VIRTUAL_BALANCE = 1000;
+const FREE_TRIAL_HLO_PRIZE = 250;
+
+export async function createFreeTrialArena(creatorTelegramId: number): Promise<FantasyGame> {
+  await upsertUserProfile(creatorTelegramId);
+  if (await hasUsedFreeTrial(creatorTelegramId)) {
+    throw new Error("You have already used your free trial arena.");
+  }
+  const existing = await getActiveArenaForUser(creatorTelegramId);
+  if (existing) throw new Error(`You're already in arena ${existing.code}. Finish it before creating a new one.`);
+  const lobbyWaitMs = 10 * 60 * 1000;
+  const startAt = new Date(Date.now() + lobbyWaitMs).toISOString();
+  const endAt = new Date(Date.parse(startAt) + getFantasyDurationMs(FREE_TRIAL_DURATION_HOURS)).toISOString();
+  const code = await generateUniqueFantasyGameCode();
+  const game = await createFreeTrialGame({ code, creatorTelegramId, virtualStartBalance: FREE_TRIAL_VIRTUAL_BALANCE, startAt, endAt });
+  // Seed 5 AI bots as members (fire-and-forget, non-fatal)
+  seedBotsIntoFreeTrialGame(game).catch((e) => {
+    console.warn(`[arena-bots] Failed to seed bots into free trial arena ${game.code}:`, e);
+  });
+  return game;
+}
+
+export async function joinFreeTrialArena(telegramId: number, code: string): Promise<FantasyGame> {
+  await upsertUserProfile(telegramId);
+  if (await hasUsedFreeTrial(telegramId)) {
+    throw new Error("You have already used your free trial arena.");
+  }
+  const game = await getFantasyGameByCode(code.trim().toUpperCase());
+  if (!game) throw new Error("Arena not found.");
+  if (!game.is_free_trial) throw new Error("This is not a free trial arena.");
+  const existing = await getActiveArenaForUser(telegramId);
+  if (existing && existing.code !== game.code) throw new Error(`You're already in arena ${existing.code}. Finish it before joining a new one.`);
+  return joinFreeTrialGame({ code: code.trim().toUpperCase(), telegramId });
+}
+
+export async function awardFreeTrialHloPoints(telegramId: number, gameId: string): Promise<void> {
+  await awardHloPoints({ telegramId, amount: FREE_TRIAL_HLO_PRIZE, reason: "free_trial_completion", referenceId: gameId });
+}
 
 export async function createFantasyLeagueGame(creatorTelegramId: number, entryFee: number, durationHours = FANTASY_DEFAULT_DURATION_HOURS): Promise<FantasyGame> {
   return withUserWalletOperationLock({ telegramId: creatorTelegramId, reason: "arena_create", task: async () => {

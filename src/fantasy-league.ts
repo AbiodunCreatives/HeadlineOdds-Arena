@@ -94,7 +94,11 @@ export {
   getFantasyLeagueStatusView,
   getFantasyLeagueBoardText,
   getFantasyLeagueJoinSummary,
+  createFreeTrialArena,
+  joinFreeTrialArena,
+  awardFreeTrialHloPoints,
 } from "./fantasy-game.ts";
+export { hasUsedFreeTrial, awardHloPoints, getHloPoints } from "./db/fantasy.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

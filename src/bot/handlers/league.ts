@@ -45,6 +45,8 @@ import {
   clearCrossChainSession,
   type CrossChainSession,
   FANTASY_MIN_ENTRY_FEE,
+  createFreeTrialArena,
+  hasUsedFreeTrial,
   type FantasyTradePlacementResult,
   type OfframpSessionState,
 } from "../../fantasy-league.ts";
@@ -112,6 +114,7 @@ const WALLET_WITHDRAW_HELP = "wallet:withdraw";
 const WALLET_BACK = "wallet:back";
 const WALLET_CROSS_CHAIN = "wallet:cross";
 const ARENA_CREATE_CUSTOM = "arena:create:custom";
+const ARENA_FREE_TRIAL = "arena:free_trial";
 const WALLET_NAIRA_MIN_AMOUNT = 1_000;
 
 const WALLET_NAIRA_MAX_AMOUNT = 20_000;
@@ -241,6 +244,45 @@ function buildStartWelcomeKeyboard(): InlineKeyboard {
     .row()
     .text("🏟 Browse Arenas", START_LOBBY)
     .text("❓ How it works", START_HOW_IT_WORKS);
+}
+
+function buildFreeTrialWelcomeText(firstName: string): string {
+  return [
+    "🏟 HeadlineOdds Arena",
+    "",
+    `Welcome, ${firstName}!`,
+    "",
+    "Predict BTC UP or DOWN every 15 minutes.",
+    "Best virtual bankroll at the end wins.",
+    "",
+    "🎮 Try a FREE arena — no deposit needed.",
+    "You get $1,000 virtual funds and compete against 5 AI players.",
+    "Top the leaderboard and earn 250 $HLO points.",
+  ].join("\n");
+}
+
+function buildFreeTrialWelcomeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🎮 Try Free Arena", ARENA_FREE_TRIAL)
+    .text("❓ How it works", START_HOW_IT_WORKS)
+    .row()
+    .text("💵 Fund & Play", WALLET_NAIRA_HELP)
+    .text("💳 Wallet", START_WALLET);
+}
+
+function buildFreeTrialCreatedText(code: string): string {
+  return [
+    "🎮 Free Trial Arena created!",
+    "",
+    `Code: ${code}`,
+    "Virtual funds: $1,000",
+    "Duration: 1 hour  ·  4 rounds",
+    "",
+    "5 AI players (Phiona, Danfo_Dave, Fave, Mallam_Odds, Alhaji_Pump) are already in.",
+    "Share the code — friends with no deposit can join too.",
+    "",
+    "I'll ping you when round 1 opens. Good luck! 🚀",
+  ].join("\n");
 }
 
 function buildHowItWorksText(): string {
@@ -1840,6 +1882,14 @@ export async function handleStart(ctx: Context): Promise<void> {
   const balance = await getBalance(ctx.from.id);
 
   if (balance <= 0) {
+    const usedTrial = await hasUsedFreeTrial(ctx.from.id);
+    if (!usedTrial) {
+      const firstName = ctx.from.first_name?.trim() || "there";
+      await ctx.reply(buildFreeTrialWelcomeText(firstName), {
+        reply_markup: buildFreeTrialWelcomeKeyboard(),
+      });
+      return;
+    }
     await ctx.reply(buildStartWelcomeText(), {
       reply_markup: buildStartWelcomeKeyboard(),
     });
@@ -2024,6 +2074,21 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       );
     }
 
+    return;
+  }
+
+  if (data === ARENA_FREE_TRIAL) {
+    try {
+      const game = await createFreeTrialArena(ctx.from.id);
+      const shareUrl = await getArenaInviteShareUrl(ctx, { code: game.code, entryFee: 0 });
+      const keyboard = new InlineKeyboard();
+      if (shareUrl) keyboard.url("📤 Invite friends", shareUrl).row();
+      keyboard.text("🏟 Browse Lobby", ARENA_BACK_TO_LOBBY);
+      await editTradePromptMessage(ctx, buildFreeTrialCreatedText(game.code), keyboard);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Something went wrong.";
+      await editTradePromptMessage(ctx, msg, new InlineKeyboard().text("🏟 Back", START_LOBBY));
+    }
     return;
   }
 
