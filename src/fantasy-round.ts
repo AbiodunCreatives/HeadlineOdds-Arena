@@ -311,6 +311,27 @@ function buildFinalArenaMessage(input: {
   });
   const me = input.leaderboard.find((e) => e.telegram_id === input.viewerTelegramId) ?? null;
   const payout = me?.prize_awarded ?? 0;
+
+  if (input.game.is_free_trial) {
+    // Free trial arena - show potential winnings based on $100 entry fee
+    const potentialPayout = me?.place === 1 ? 460 : me?.place === 2 ? 276 : me?.place === 3 ? 184 : 0;
+    return [
+      `🎮 Free Trial Arena ${input.game.code} — COMPLETED`,
+      "",
+      `Duration: ${formatDurationHours(getGameDurationHours(input.game))}  •  ${input.roundsPlayed} rounds played`,
+      "",
+      ...standings,
+      "",
+      `🎁 You earned 50 HLO points for completing your first arena!`,
+      "",
+      potentialPayout > 0 
+        ? `💰 If this was a $100 arena, you would have won $${potentialPayout}!`
+        : `💰 If this was a $100 arena, the winner would have earned $460!`,
+      "",
+      `Ready to play for real money? Create or join an arena starting at just $1.`,
+    ].join("\n");
+  }
+
   return [
     `🏁 Arena ${input.game.code} — FINAL`,
     "",

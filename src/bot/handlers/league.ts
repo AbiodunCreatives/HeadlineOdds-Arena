@@ -288,7 +288,8 @@ function buildFreeTrialCreatedText(code: string): string {
     "• Phiona 🔥 • Danfo_Dave 🛡 • Fave 🎲",
     "• Mallam_Odds 📈 • Alhaji_Pump ↩️",
     "",
-    "Share the code — friends can join with no deposit!",
+    `Share: https://t.me/share/url?url=Join%20my%20HeadlineOdds%20Arena%20with%20code%20${code}%20-%20no%20deposit%20needed!`,
+    "",
     "I'll ping you when round 1 opens. Good luck! 🚀",
   ].join("\n");
 }
