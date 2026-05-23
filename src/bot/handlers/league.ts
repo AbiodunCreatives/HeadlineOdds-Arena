@@ -245,11 +245,13 @@ function buildStartWelcomeText(): string {
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💵 Fund with Naira", WALLET_NAIRA_HELP)
+    .text("💵 Fund Naira", WALLET_NAIRA_HELP)
     .text("💳 Deposit USDC", START_WALLET)
-    .row()
     .text("🏟 Browse Arenas", START_LOBBY)
-    .text("❓ How it works", START_HOW_IT_WORKS);
+    .row()
+    .text("❓ How it works", START_HOW_IT_WORKS)
+    .text("📊 Chart", "chart")
+    .text("🎮 Free Trial", ARENA_FREE_TRIAL);
 }
 
 function buildFreeTrialWelcomeText(firstName: string): string {
@@ -271,9 +273,11 @@ function buildFreeTrialWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🎮 Try Free Arena", ARENA_FREE_TRIAL)
     .text("❓ How it works", START_HOW_IT_WORKS)
+    .text("📊 Chart", "chart")
     .row()
     .text("💵 Fund & Play", WALLET_NAIRA_HELP)
-    .text("💳 Wallet", START_WALLET);
+    .text("💳 Wallet", START_WALLET)
+    .text("🏟 Browse Arenas", START_LOBBY);
 }
 
 function buildFreeTrialCreatedText(code: string): string {
@@ -345,14 +349,23 @@ function buildStartOnboardingText(input: {
 function buildStartOnboardingKeyboard(showFreeTrial = false): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (showFreeTrial) {
-    kb.text("🎮 Try Free Arena", ARENA_FREE_TRIAL).row();
+    return kb
+      .text("🎮 Try Free Arena", ARENA_FREE_TRIAL)
+      .text("🏟 Browse Arenas", START_LOBBY)
+      .text("⚡ Create Arena", ARENA_CREATE)
+      .row()
+      .text("💳 Wallet", START_WALLET)
+      .text("❓ How it works", START_HOW_IT_WORKS)
+      .text("📊 Chart", "chart");
   }
   return kb
     .text("🏟 Browse Arenas", START_LOBBY)
     .text("⚡ Create Arena", ARENA_CREATE)
-    .row()
     .text("💳 Wallet", START_WALLET)
-    .text("❓ How it works", START_HOW_IT_WORKS);
+    .row()
+    .text("❓ How it works", START_HOW_IT_WORKS)
+    .text("📊 Chart", "chart")
+    .text("🎮 Free Trial", ARENA_FREE_TRIAL);
 }
 
 function buildCreateArenaPickerText(balance: number): string {
@@ -369,15 +382,23 @@ function buildCreateArenaPickerText(balance: number): string {
 function buildCreateArenaPickerKeyboard(telegramId?: number): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
-  for (const fee of ARENA_ENTRY_FEE_OPTIONS) {
-    keyboard.text(`$${fee}`, `arena:create:${fee}`);
-  }
+  // First row: $1, $2, $5
+  keyboard.text("$1", "arena:create:1")
+    .text("$2", "arena:create:2")
+    .text("$5", "arena:create:5")
+    .row();
 
+  // Second row: $10, Custom (if dev), Back
+  keyboard.text("$10", "arena:create:10");
+  
   if (telegramId && isDevUser(telegramId)) {
-    keyboard.row().text("✏️ Custom fee", ARENA_CREATE_CUSTOM);
+    keyboard.text("✏️ Custom", ARENA_CREATE_CUSTOM);
+  } else {
+    keyboard.text("📊 Chart", "chart");
   }
-
-  keyboard.row().text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY);
+  
+  keyboard.text("🏟 Back", ARENA_BACK_TO_LOBBY);
+  
   return keyboard;
 }
 
@@ -805,10 +826,10 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
   return [
     "💳 Wallet",
     "",
-    `Balance       ${formatUsdc(summary.balance)}`,
+    `Balance       \`${formatUsdc(summary.balance)}\``,
     "─────────────────────────",
     "📥 Deposit address",
-    summary.wallet.owner_address,
+    `\`${summary.wallet.owner_address}\``,
     "",
     `💰 NGN Top-ups${onrampCount > 0 ? `  (${onrampCount} recent)` : ""}`,
     ...onrampLines,
@@ -823,11 +844,10 @@ function buildWalletKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🔄 Refresh", WALLET_REFRESH)
     .text("💵 Fund NGN", WALLET_NAIRA_HELP)
-    .row()
     .text("💸 Offramp NGN", "offramp:start")
-    .text("🌐 Other chain", WALLET_CROSS_CHAIN)
     .row()
-    .text("📤 Withdraw USDC", WALLET_WITHDRAW_HELP)
+    .text("🌐 Other chain", WALLET_CROSS_CHAIN)
+    .text("📤 Withdraw", WALLET_WITHDRAW_HELP)
     .text("🏟 Arenas", WALLET_BACK);
 }
 
@@ -887,10 +907,9 @@ function buildWalletNairaPickerKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text(formatNairaCompact(WALLET_NAIRA_PRESET_AMOUNTS[0]), `${WALLET_NAIRA_AMOUNT_PREFIX}${WALLET_NAIRA_PRESET_AMOUNTS[0]}`)
     .text(formatNairaCompact(WALLET_NAIRA_PRESET_AMOUNTS[1]), `${WALLET_NAIRA_AMOUNT_PREFIX}${WALLET_NAIRA_PRESET_AMOUNTS[1]}`)
-    .row()
     .text(formatNairaCompact(WALLET_NAIRA_PRESET_AMOUNTS[2]), `${WALLET_NAIRA_AMOUNT_PREFIX}${WALLET_NAIRA_PRESET_AMOUNTS[2]}`)
-    .text(formatNairaCompact(WALLET_NAIRA_PRESET_AMOUNTS[3]), `${WALLET_NAIRA_AMOUNT_PREFIX}${WALLET_NAIRA_PRESET_AMOUNTS[3]}`)
     .row()
+    .text(formatNairaCompact(WALLET_NAIRA_PRESET_AMOUNTS[3]), `${WALLET_NAIRA_AMOUNT_PREFIX}${WALLET_NAIRA_PRESET_AMOUNTS[3]}`)
     .text("✏️ Custom", WALLET_NAIRA_CUSTOM)
     .text("← Back", WALLET_NAIRA_BACK);
 }
