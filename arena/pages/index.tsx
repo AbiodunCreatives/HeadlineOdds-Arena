@@ -4,27 +4,27 @@ import Layout from '../components/Layout';
 const STEPS = [
   {
     num: '01',
-    icon: '📰',
-    title: 'Pick a Headline',
-    desc: 'A real news headline drops in the Arena. You decide: will the market move UP or DOWN?',
+    icon: '₿',
+    title: 'Get the BTC Signal',
+    desc: 'A live BTC price round opens in the Arena. You decide: will BTC be above or below the target when the round closes?',
   },
   {
     num: '02',
     icon: '💰',
-    title: 'Enter with USDC',
-    desc: 'Fund your in-bot wallet with USDC on Solana. Entry fees are tiny — the prize pool is not.',
+    title: 'Enter with Virtual USDC',
+    desc: 'Each arena gives you a virtual bankroll. Stake it on your prediction — free trial arenas need no deposit.',
   },
   {
     num: '03',
     icon: '⚡',
     title: 'Round Resolves',
-    desc: 'The round closes, outcomes are verified on-chain, and winners are paid out automatically.',
+    desc: 'The round closes, the BTC outcome is verified on-chain, and winners are credited automatically.',
   },
   {
     num: '04',
     icon: '🏆',
     title: 'Collect Winnings',
-    desc: 'Winnings land in your in-bot balance instantly. Withdraw to any Solana wallet anytime.',
+    desc: 'Top players win real USDC. Winnings land in your in-bot balance instantly — withdraw to any Solana wallet anytime.',
   },
 ];
 
@@ -40,14 +40,14 @@ const FEATURES = [
     desc: 'Every wallet, deposit, and withdrawal is settled on Solana. Fast, cheap, and verifiable.',
   },
   {
-    icon: '📊',
-    title: 'Real Headlines',
-    desc: 'Rounds are built around real market-moving news — crypto, macro, and global events.',
+    icon: '₿',
+    title: 'Live BTC Rounds',
+    desc: 'Each round is a real-time BTC price prediction. Signal drops, window opens, round closes — repeat.',
   },
   {
-    icon: '🛡️',
-    title: 'Custodial Wallets',
-    desc: 'Your in-bot USDC balance is fully audited. Deposit, play, and withdraw with full transparency.',
+    icon: '🤖',
+    title: 'AI Opponents',
+    desc: 'Free trial arenas fill with AI agents running live market signals — momentum, RSI, and odds drift.',
   },
   {
     icon: '⚙️',
@@ -69,12 +69,12 @@ export default function Home() {
         <div className="container">
           <div className="hero-badge">⚡ Live on Telegram</div>
           <h1>
-            Predict Headlines.<br />
+            Predict BTC.<br />
             <span className="highlight">Win Real USDC.</span>
           </h1>
           <p className="hero-sub">
-            HeadlineOdds Arena is a Telegram-native fantasy prediction market.
-            Pick the right outcome, beat the crowd, and get paid on Solana.
+            HeadlineOdds Arena is a Telegram-native BTC prediction league.
+            Call the price direction, beat the crowd, and get paid on Solana.
           </p>
           <div className="hero-cta">
             <Link href="/play" className="btn btn-gold">
