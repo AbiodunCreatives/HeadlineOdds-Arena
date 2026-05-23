@@ -333,8 +333,12 @@ function buildStartOnboardingText(input: {
   ].join("\n");
 }
 
-function buildStartOnboardingKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
+function buildStartOnboardingKeyboard(showFreeTrial = false): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (showFreeTrial) {
+    kb.text("🎮 Try Free Arena", ARENA_FREE_TRIAL).row();
+  }
+  return kb
     .text("🏟 Browse Arenas", START_LOBBY)
     .text("⚡ Create Arena", ARENA_CREATE)
     .row()
@@ -1880,9 +1884,9 @@ export async function handleStart(ctx: Context): Promise<void> {
   }
 
   const balance = await getBalance(ctx.from.id);
+  const usedTrial = await hasUsedFreeTrial(ctx.from.id);
 
   if (balance <= 0) {
-    const usedTrial = await hasUsedFreeTrial(ctx.from.id);
     if (!usedTrial) {
       const firstName = ctx.from.first_name?.trim() || "there";
       await ctx.reply(buildFreeTrialWelcomeText(firstName), {
@@ -1903,7 +1907,7 @@ export async function handleStart(ctx: Context): Promise<void> {
     }),
     {
       parse_mode: "MarkdownV2",
-      reply_markup: buildStartOnboardingKeyboard(),
+      reply_markup: buildStartOnboardingKeyboard(!usedTrial),
     }
   );
 }
