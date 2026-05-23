@@ -278,15 +278,17 @@ function buildFreeTrialWelcomeKeyboard(): InlineKeyboard {
 
 function buildFreeTrialCreatedText(code: string): string {
   return [
-    "🎮 Free Trial Arena created!",
+    "🎮 Free Trial Arena Created!",
     "",
-    `Code: ${code}`,
-    "Virtual funds: $1,000",
-    "Duration: 1 hour  ·  4 rounds",
+    `📋 Arena Code: \`${code}\``,
+    `💰 Virtual Bankroll: \`$1,000\``,
+    `⏱️ Duration: \`1 hour\` • \`4 rounds\``,
     "",
-    "5 AI players (Phiona, Danfo_Dave, Fave, Mallam_Odds, Alhaji_Pump) are already in.",
-    "Share the code — friends with no deposit can join too.",
+    "🤖 AI Players Already In:",
+    "• Phiona 🔥 • Danfo_Dave 🛡 • Fave 🎲",
+    "• Mallam_Odds 📈 • Alhaji_Pump ↩️",
     "",
+    "Share the code — friends can join with no deposit!",
     "I'll ping you when round 1 opens. Good luck! 🚀",
   ].join("\n");
 }
