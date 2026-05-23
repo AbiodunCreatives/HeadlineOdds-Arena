@@ -2120,6 +2120,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       keyboard.text("🏟 Browse Lobby", ARENA_BACK_TO_LOBBY);
       await editTradePromptMessage(ctx, buildFreeTrialCreatedText(game.code), keyboard);
     } catch (error) {
+      console.error("[bot] Free trial arena creation failed:", error);
       const msg = error instanceof Error ? error.message : "Something went wrong.";
       await editTradePromptMessage(ctx, msg, new InlineKeyboard().text("🏟 Back", START_LOBBY));
     }
