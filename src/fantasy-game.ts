@@ -14,6 +14,7 @@ import {
   joinFantasyGameWithEntry,
   joinFreeTrialGame,
   awardHloPoints,
+  setMemberAgentStyle,
   listFantasyTradesForGame,
   listUserFantasyGames,
   type FantasyGame,
@@ -62,6 +63,17 @@ import {
 } from "./fantasy-league.ts";
 import { randomBytes } from "crypto";
 import { seedBotsIntoFreeTrialGame } from "./arena-bots.ts";
+
+export const AGENT_STYLES = ["aggressive", "conservative", "random", "trend", "contrarian"] as const;
+export type AgentStyle = typeof AGENT_STYLES[number];
+
+export const AGENT_DISPLAY_NAMES: Record<AgentStyle, string> = {
+  aggressive:   "Phiona 🔥",
+  conservative: "Danfo_Dave 🛡",
+  random:       "Fave 🎲",
+  trend:        "Mallam_Odds 📈",
+  contrarian:   "Alhaji_Pump ↩️",
+};
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -210,6 +222,36 @@ export async function joinFreeTrialArena(telegramId: number, code: string): Prom
 
 export async function awardFreeTrialHloPoints(telegramId: number, gameId: string): Promise<void> {
   await awardHloPoints({ telegramId, amount: FREE_TRIAL_HLO_PRIZE, reason: "free_trial_completion", referenceId: gameId });
+}
+
+// ── Player-owned agent arena ──────────────────────────────────────────────────
+
+/**
+ * Create a paid arena where the creator's trades are handled automatically
+ * by the chosen agent style each round.
+ */
+export async function createAgentArena(
+  creatorTelegramId: number,
+  entryFee: number,
+  durationHours: number,
+  agentStyle: AgentStyle
+): Promise<FantasyGame> {
+  const game = await createFantasyLeagueGame(creatorTelegramId, entryFee, durationHours);
+  await setMemberAgentStyle(game.id, creatorTelegramId, agentStyle);
+  return game;
+}
+
+/**
+ * Join a paid arena with an agent style — the agent auto-trades each round.
+ */
+export async function joinAgentArena(
+  telegramId: number,
+  code: string,
+  agentStyle: AgentStyle
+): Promise<FantasyGame> {
+  const game = await joinFantasyLeagueGame(telegramId, code);
+  await setMemberAgentStyle(game.id, telegramId, agentStyle);
+  return game;
 }
 
 export async function createFantasyLeagueGame(creatorTelegramId: number, entryFee: number, durationHours = FANTASY_DEFAULT_DURATION_HOURS): Promise<FantasyGame> {

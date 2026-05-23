@@ -76,13 +76,14 @@ import {
   FANTASY_COMMISSION_RATE,
   FANTASY_ENTRY_MULTIPLIER,
   FANTASY_TRADE_AMOUNTS,
+  awardFreeTrialHloPoints,
   buildRoundBroadcastPayload,
   getPrizePoolBreakdown,
   getPrizeSplits,
   roundMoney,
   schedulePromptCountdown,
 } from "./fantasy-league.ts";
-import { runBotTradesForRound } from "./arena-bots.ts";
+import { runBotTradesForRound, runAgentTradesForRound } from "./arena-bots.ts";
 
 const tgApi = new Api(config.BOT_TOKEN);
 let cachedBotUsername: string | null = null;
@@ -460,6 +461,15 @@ export async function processFantasyLeagueRound(round: Round, pricing: RoundPric
         console.warn(`[arena-bots] Auto-trade failed for arena ${game.code}:`, e);
       });
     }
+    // Player-owned agents auto-trade in paid arenas
+    if (!game.is_free_trial) {
+      const prevRef = game.last_round_event_id
+        ? await loadFantasyTradeReference(game.last_round_event_id).catch(() => null)
+        : null;
+      runAgentTradesForRound(game, pricing, prevRef?.upPrice ?? null).catch((e) => {
+        console.warn(`[arena-bots] Agent auto-trade failed for arena ${game.code}:`, e);
+      });
+    }
   }
 }
 
@@ -595,6 +605,12 @@ export async function finalizeFantasyGames(): Promise<void> {
     await recordRevenueOnce({ telegramId: game.creator_telegram_id, type: `fantasy_commission:${game.code}`, amount: breakdown.commissionAmount });
     await updateFantasyGame({ gameId: game.id, status: "completed", completedAt: new Date().toISOString() });
     const completedGame = ((await getFantasyGameById(game.id)) ?? { ...game, status: "completed", completed_at: new Date().toISOString() }) as FantasyGame;
+    // Award HLO points to real members of free trial arenas
+    if (completedGame.is_free_trial) {
+      for (const member of members.filter((m) => m.telegram_id > 0)) {
+        await awardFreeTrialHloPoints(member.telegram_id, completedGame.id).catch(console.error);
+      }
+    }
     await Promise.all(members.map(async (member) => {
       const me = refreshedLeaderboard.find((e) => e.telegram_id === member.telegram_id) ?? null;
       const leader = refreshedLeaderboard[0] ?? null;

@@ -5,8 +5,10 @@
 import { supabase } from "./db/client.ts";
 import {
   getFantasyGameMember,
+  listFantasyGameMembers,
   placeFantasyTradeWithDebit,
   type FantasyGame,
+  type FantasyGameMember,
 } from "./db/fantasy.ts";
 import { getTradeQuote } from "./bayse-market.ts";
 import { FANTASY_TRADE_AMOUNTS, roundMoney } from "./fantasy-league.ts";
@@ -222,6 +224,82 @@ export async function runBotTradesForRound(
         });
       } catch (error) {
         console.warn(`[arena-bots] Bot ${bot.telegram_id} (${bot.style}) failed round ${pricing.eventId}:`, error);
+      }
+    })
+  );
+}
+
+
+// ── Player-owned agent auto-trade ─────────────────────────────────────────────
+
+/**
+ * For paid arenas: auto-trade on behalf of members who have agent_style set.
+ * Called each round alongside (or instead of) the free-trial bot pass.
+ */
+export async function runAgentTradesForRound(
+  game: FantasyGame,
+  pricing: RoundPricing,
+  previousUpPrice: number | null = null
+): Promise<void> {
+  const members = await listFantasyGameMembers(game.id);
+  const agentMembers = members.filter(
+    (m): m is FantasyGameMember & { agent_style: string } =>
+      m.agent_style !== null && m.telegram_id > 0
+  );
+  if (agentMembers.length === 0) return;
+
+  const signals = await getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
+    momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
+  }));
+
+  await Promise.all(
+    agentMembers.map(async (member) => {
+      try {
+        // Skip if already traded this round
+        const { count } = await supabase
+          .from("fantasy_trades")
+          .select("id", { count: "exact", head: true })
+          .eq("game_id", game.id)
+          .eq("telegram_id", member.telegram_id)
+          .eq("event_id", pricing.eventId);
+        if ((count ?? 0) > 0) return;
+
+        const { direction, stake } = botDecision(
+          member.agent_style as BotStyle,
+          pricing,
+          member.virtual_balance,
+          signals.composite
+        );
+        if (member.virtual_balance < stake) return;
+
+        const outcomeId = direction === "UP" ? pricing.upOutcomeId : pricing.downOutcomeId;
+        if (!outcomeId) return;
+
+        const quote = await getTradeQuote({
+          eventId: pricing.eventId,
+          marketId: pricing.marketId,
+          outcomeId,
+          amount: stake,
+          currency: "USD",
+        });
+        if (!quote) return;
+
+        const entryPrice = direction === "UP" ? pricing.upPrice : pricing.downPrice;
+        const shares = roundMoney(quote.quantity ?? stake / Math.max(0.01, entryPrice));
+
+        await placeFantasyTradeWithDebit({
+          gameId: game.id,
+          memberId: member.id,
+          telegramId: member.telegram_id,
+          eventId: pricing.eventId,
+          marketId: pricing.marketId,
+          direction,
+          stake,
+          entryPrice,
+          shares,
+        });
+      } catch (error) {
+        console.warn(`[arena-bots] Agent trade failed for member ${member.telegram_id} (${member.agent_style}) in arena ${game.code}:`, error);
       }
     })
   );

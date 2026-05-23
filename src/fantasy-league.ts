@@ -97,6 +97,11 @@ export {
   createFreeTrialArena,
   joinFreeTrialArena,
   awardFreeTrialHloPoints,
+  createAgentArena,
+  joinAgentArena,
+  AGENT_STYLES,
+  AGENT_DISPLAY_NAMES,
+  type AgentStyle,
 } from "./fantasy-game.ts";
 export { hasUsedFreeTrial, awardHloPoints, getHloPoints } from "./db/fantasy.ts";
 

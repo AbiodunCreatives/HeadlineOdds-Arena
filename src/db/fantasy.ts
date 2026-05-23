@@ -36,6 +36,7 @@ export interface FantasyGameMember {
   losses: number;
   prize_awarded: number;
   username?: string | null;
+  agent_style: string | null;
 }
 
 export interface FantasyTrade {
@@ -201,6 +202,7 @@ function normalizeFantasyMember(row: FantasyGameMemberRow): FantasyGameMember {
     wins: parseCount(row.wins),
     losses: parseCount(row.losses),
     username: row.username ?? null,
+    agent_style: (row as { agent_style?: unknown }).agent_style as string | null ?? null,
   };
 }
 
@@ -1455,6 +1457,21 @@ export async function listPendingPrizeTransfers(
       transfer_retry_count: r.transfer_retry_count ?? 0,
     };
   });
+}
+
+// ── Agent arena helpers ───────────────────────────────────────────────────────
+
+export async function setMemberAgentStyle(
+  gameId: string,
+  telegramId: number,
+  agentStyle: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("fantasy_game_members")
+    .update({ agent_style: agentStyle })
+    .eq("game_id", gameId)
+    .eq("telegram_id", telegramId);
+  if (error) throw error;
 }
 
 // ── HLO Points & Free Trial ───────────────────────────────────────────────────
