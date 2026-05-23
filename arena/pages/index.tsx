@@ -66,11 +66,13 @@ export default function Home() {
     <Layout>
       {/* Hero */}
       <section className="hero">
-        <div className="container">
+        <div className="hero-grid" />
+        <div className="hero-watermark">ARENA TRADE</div>
+        <div className="container hero-inner">
           <div className="hero-badge">⚡ Live on Telegram</div>
           <h1>
-            Predict BTC.<br />
-            <span className="highlight">Win Real USDC.</span>
+            A Prediction Arena<br />
+            Built For BTC Traders
           </h1>
           <p className="hero-sub">
             HeadlineOdds Arena is a Telegram-native BTC prediction league.
@@ -78,11 +80,45 @@ export default function Home() {
           </p>
           <div className="hero-cta">
             <Link href="/play" className="btn btn-gold">
-              🚀 Play on Telegram
+              🚀 Play on Telegram →
             </Link>
             <a href="#how-it-works" className="btn btn-outline">
-              How it works
+              How it works →
             </a>
+          </div>
+
+          {/* Phone mockup */}
+          <div className="hero-mockup">
+            <div className="mockup-frame">
+              <div className="mockup-statusbar">
+                <span>09:40</span>
+                <span>▲ ▲ ▲ ▬</span>
+              </div>
+              <div className="mockup-body">
+                <div className="mockup-card">
+                  <div className="mockup-label">BTC Arena Stack</div>
+                  <div className="mockup-price">$1,024.50</div>
+                  <div className="mockup-stats">
+                    <div>
+                      <div className="mockup-stat-label">Start</div>
+                      <div className="mockup-stat-val">$1,000</div>
+                    </div>
+                    <div>
+                      <div className="mockup-stat-label">Return</div>
+                      <div className="mockup-stat-val green">+2.45%</div>
+                    </div>
+                    <div>
+                      <div className="mockup-stat-label">Rank</div>
+                      <div className="mockup-stat-val green">#1</div>
+                    </div>
+                  </div>
+                  <div className="mockup-tabs">
+                    <div className="mockup-tab active">Balance</div>
+                    <div className="mockup-tab">Performance</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="hero-stats">

@@ -33,7 +33,7 @@ export default function Layout({
           <div className="nav-links">
             <Link href="/#how-it-works">How it works</Link>
             <Link href="/#features">Features</Link>
-            <Link href="/play" className="btn btn-primary" style={{ padding: '8px 20px', fontSize: '0.875rem' }}>
+            <Link href="/play" className="btn btn-gold" style={{ padding: '8px 20px', fontSize: '0.875rem' }}>
               Play Now
             </Link>
           </div>
