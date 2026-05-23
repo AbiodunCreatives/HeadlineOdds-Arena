@@ -110,6 +110,7 @@ const envSchema = z.object({
     .default(60_000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   GROQ_API_KEY: optionalString,
+  PRIVY_APP_ID: optionalString,
   DEXTOPUS_API_KEY: optionalString,
   DEXTOPUS_PARTNER_FEE_RECIPIENT: optionalString,
   DEXTOPUS_PARTNER_FEE_BPS: z.coerce.number().int().nonnegative().default(0),

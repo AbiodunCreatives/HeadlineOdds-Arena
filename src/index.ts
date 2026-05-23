@@ -4,6 +4,7 @@ import { timingSafeEqual } from "crypto";
 import express from "express";
 import { Bot, type Context } from "grammy";
 
+import { registerArenaRoutes } from "./api/arena-routes.ts";
 import { registerAdminDashboard } from "./admin-dashboard.ts";
 import { getBtcChartMenuUrl, registerBtcChartMenuPage } from "./btc-chart-menu.ts";
 import {
@@ -322,6 +323,7 @@ app.post("/webhook/:secret", telegramWebhookRateLimit, async (req, res) => {
 });
 
 const server = createServer(app);
+registerArenaRoutes(app, server);
 
 server.on("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
