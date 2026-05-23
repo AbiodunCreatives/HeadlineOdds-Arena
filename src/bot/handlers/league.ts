@@ -1116,11 +1116,13 @@ function buildArenaLiveKeyboard(input: {
   code: string;
   canCatchUp: boolean;
   marketUrl?: string;
+  tradeWindowOpen?: boolean;
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   if (config.ARENA_URL) {
-    keyboard.webApp("⚡ Trade", `${config.ARENA_URL}/trade?code=${input.code}`).row();
+    const label = input.tradeWindowOpen ? "⚡ Trade Now" : "📊 View Arena";
+    keyboard.webApp(label, `${config.ARENA_URL}/trade?code=${input.code}`).row();
   }
 
   if (input.marketUrl) {
@@ -1722,10 +1724,10 @@ function buildArenaLiveText(input: {
     `Round time left: ${formatRoundCountdown(input.snapshot.round.closingDate)}`,
     `Round closes: ${formatDateTime(input.snapshot.round.closingDate)}`,
     tradeWindowCloseMs === null
-      ? "Bot entry window: unavailable"
+      ? "Trade window: unavailable"
       : tradeWindowCloseMs > Date.now()
-      ? `Bot entry window: ${formatCompactDuration(tradeWindowCloseMs - Date.now())} left`
-      : "Bot entry window: closed for this round"
+      ? `⚡ Trade window: ${formatCompactDuration(tradeWindowCloseMs - Date.now())} left — tap Trade below`
+      : "Trade window closed • Next round opens soon"
   );
 
   return lines.join("\n");
@@ -1754,6 +1756,12 @@ async function renderArenaLiveView(
       code: view.game.code,
       canCatchUp: Boolean(view.me && view.me.place > 1),
       marketUrl: snapshot?.pricing?.url,
+      tradeWindowOpen: (() => {
+        if (!snapshot) return false;
+        const open = Date.parse(snapshot.round.openingDate);
+        const close = Date.parse(snapshot.round.closingDate);
+        return Date.now() < open + (close - open) * 0.2;
+      })(),
     })
   );
 }
@@ -3133,6 +3141,12 @@ export async function handleLeague(ctx: Context): Promise<void> {
             code,
             canCatchUp: Boolean(view.me && view.me.place > 1),
             marketUrl: snapshot?.pricing?.url,
+            tradeWindowOpen: (() => {
+              if (!snapshot) return false;
+              const open = Date.parse(snapshot.round.openingDate);
+              const close = Date.parse(snapshot.round.closingDate);
+              return Date.now() < open + (close - open) * 0.2;
+            })(),
           }),
         }
       );
