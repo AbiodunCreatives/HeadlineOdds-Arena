@@ -13,11 +13,12 @@ import {
 import { getTradeQuote } from "./bayse-market.ts";
 import { FANTASY_TRADE_AMOUNTS, roundMoney } from "./fantasy-league.ts";
 import type { RoundPricing } from "./bayse-market.ts";
-import { getMarketSignals } from "./agent-signals.ts";
+import { getMarketSignals, type MarketSignals } from "./agent-signals.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type BotStyle = "aggressive" | "conservative" | "random" | "trend" | "contrarian";
+type BotStyle = "aggressive" | "conservative" | "random" | "trend" | "contrarian"
+  | "scalper" | "momentum_only" | "mean_revert" | "odds_follower" | "balanced";
 
 interface ArenaBotRow {
   telegram_id: number;
@@ -56,23 +57,21 @@ function kellyStake(
 /**
  * Signal-based decision per agent style.
  *
- * composite signal in [-1,+1]:
- *   > 0  → UP signal
- *   < 0  → DOWN signal
- *
- * Each style interprets the signal differently:
- *   aggressive   — follows signal strongly, high Kelly cap (40% bankroll)
- *   conservative — follows signal only when confident, low Kelly cap (10%)
- *   trend        — follows signal with medium Kelly cap (20%)
- *   contrarian   — fades the signal (bets opposite), medium Kelly cap (25%)
- *   random       — ignores signal, random direction, random stake
+ * Existing styles use signals.composite [-1,+1].
+ * New styles use individual signals for distinct behaviour:
+ *   scalper       — RSI-only, tiny Kelly (5%), only trades on strong RSI (|rsi|>0.5)
+ *   momentum_only — pure momentum signal, ignores RSI+drift, Kelly 30%
+ *   mean_revert   — fades momentum, follows RSI, Kelly 20%
+ *   odds_follower — pure oddsDrift signal, ignores momentum+RSI, Kelly 35%
+ *   balanced      — only trades when all 3 signals agree (same sign), equal weight, Kelly 15%
  */
 export function botDecision(
   style: BotStyle,
   pricing: RoundPricing,
   virtualBalance: number,
-  compositeSignal: number  // [-1, +1]
+  signals: MarketSignals
 ): { direction: "UP" | "DOWN"; stake: number } {
+  const { composite, momentum, rsi, oddsDrift } = signals;
   const amounts = FANTASY_TRADE_AMOUNTS;
 
   if (style === "random") {
@@ -82,7 +81,80 @@ export function botDecision(
     };
   }
 
-  // Determine direction from signal
+  // ── New styles with distinct signal logic ─────────────────────────────────
+
+  if (style === "scalper") {
+    // Only acts on strong RSI extremes; ignores momentum and drift entirely
+    if (Math.abs(rsi) < 0.5) {
+      // No strong RSI signal — sit out (return minimum stake, market favourite)
+      const dir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
+      return { direction: dir, stake: amounts[0]! };
+    }
+    return {
+      direction: rsi > 0 ? "UP" : "DOWN",
+      stake: kellyStake(0.5 + Math.abs(rsi) * 0.15, rsi > 0 ? pricing.upPrice : pricing.downPrice, virtualBalance, 0.05),
+    };
+  }
+
+  if (style === "momentum_only") {
+    // Pure price momentum — ignores RSI and odds drift
+    const dir = momentum >= 0 ? "UP" : "DOWN";
+    const entryPrice = dir === "UP" ? pricing.upPrice : pricing.downPrice;
+    return {
+      direction: dir,
+      stake: kellyStake(0.5 + Math.abs(momentum) * 0.2, entryPrice, virtualBalance, 0.30),
+    };
+  }
+
+  if (style === "mean_revert") {
+    // Fades momentum (bets against the trend), but follows RSI
+    // Combined signal: RSI - momentum (RSI confirms, momentum fades)
+    const meanSignal = rsi * 0.6 - momentum * 0.4;
+    if (Math.abs(meanSignal) < 0.15) {
+      const dir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
+      return { direction: dir, stake: amounts[0]! };
+    }
+    const dir = meanSignal > 0 ? "UP" : "DOWN";
+    const entryPrice = dir === "UP" ? pricing.upPrice : pricing.downPrice;
+    return {
+      direction: dir,
+      stake: kellyStake(0.5 + Math.abs(meanSignal) * 0.18, entryPrice, virtualBalance, 0.20),
+    };
+  }
+
+  if (style === "odds_follower") {
+    // Purely follows market odds movement (oddsDrift), ignores price signals
+    if (Math.abs(oddsDrift) < 0.1) {
+      const dir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
+      return { direction: dir, stake: amounts[0]! };
+    }
+    const dir = oddsDrift > 0 ? "UP" : "DOWN";
+    const entryPrice = dir === "UP" ? pricing.upPrice : pricing.downPrice;
+    return {
+      direction: dir,
+      stake: kellyStake(0.5 + Math.abs(oddsDrift) * 0.25, entryPrice, virtualBalance, 0.35),
+    };
+  }
+
+  if (style === "balanced") {
+    // Only trades when all 3 signals agree on direction
+    const allAgree = Math.sign(momentum) === Math.sign(rsi) && Math.sign(rsi) === Math.sign(oddsDrift)
+      && momentum !== 0 && rsi !== 0 && oddsDrift !== 0;
+    if (!allAgree) {
+      const dir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
+      return { direction: dir, stake: amounts[0]! };
+    }
+    const balancedSignal = (momentum + rsi + oddsDrift) / 3;
+    const dir = balancedSignal > 0 ? "UP" : "DOWN";
+    const entryPrice = dir === "UP" ? pricing.upPrice : pricing.downPrice;
+    return {
+      direction: dir,
+      stake: kellyStake(0.5 + Math.abs(balancedSignal) * 0.2, entryPrice, virtualBalance, 0.15),
+    };
+  }
+
+  // ── Original styles using composite signal ────────────────────────────────
+
   let signalDir: "UP" | "DOWN";
   let winProbability: number;
   let maxKellyFraction: number;
@@ -90,36 +162,34 @@ export function botDecision(
 
   switch (style) {
     case "aggressive":
-      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
-      winProbability = 0.5 + Math.abs(compositeSignal) * 0.2; // 50–70%
+      signalDir = composite >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(composite) * 0.2;
       maxKellyFraction = 0.40;
-      confidenceThreshold = 0.0; // always trades
+      confidenceThreshold = 0.0;
       break;
     case "conservative":
-      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
-      winProbability = 0.5 + Math.abs(compositeSignal) * 0.15;
+      signalDir = composite >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(composite) * 0.15;
       maxKellyFraction = 0.10;
-      confidenceThreshold = 0.3; // only trades when signal is clear
+      confidenceThreshold = 0.3;
       break;
     case "trend":
-      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
-      winProbability = 0.5 + Math.abs(compositeSignal) * 0.18;
+      signalDir = composite >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(composite) * 0.18;
       maxKellyFraction = 0.20;
       confidenceThreshold = 0.1;
       break;
     case "contrarian":
-      // Fades the signal
-      signalDir = compositeSignal >= 0 ? "DOWN" : "UP";
-      winProbability = 0.5 + Math.abs(compositeSignal) * 0.12;
+      signalDir = composite >= 0 ? "DOWN" : "UP";
+      winProbability = 0.5 + Math.abs(composite) * 0.12;
       maxKellyFraction = 0.25;
       confidenceThreshold = 0.2;
       break;
   }
 
-  // Fall back to market favourite if signal is below confidence threshold
-  if (Math.abs(compositeSignal) < confidenceThreshold) {
+  if (Math.abs(composite) < confidenceThreshold) {
     signalDir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
-    winProbability = 0.52; // slight edge assumed
+    winProbability = 0.52;
   }
 
   const entryPrice = signalDir === "UP" ? pricing.upPrice : pricing.downPrice;
@@ -192,7 +262,7 @@ export async function runBotTradesForRound(
           bot.style as BotStyle,
           pricing,
           member.virtual_balance,
-          signals.composite
+          signals
         );
         if (member.virtual_balance < stake) return;
 
@@ -268,7 +338,7 @@ export async function runAgentTradesForRound(
           member.agent_style as BotStyle,
           pricing,
           member.virtual_balance,
-          signals.composite
+          signals
         );
         if (member.virtual_balance < stake) return;
 

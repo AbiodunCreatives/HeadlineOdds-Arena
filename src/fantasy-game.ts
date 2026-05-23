@@ -64,15 +64,20 @@ import {
 import { randomBytes } from "crypto";
 import { seedBotsIntoFreeTrialGame } from "./arena-bots.ts";
 
-export const AGENT_STYLES = ["aggressive", "conservative", "random", "trend", "contrarian"] as const;
+export const AGENT_STYLES = ["aggressive", "conservative", "random", "trend", "contrarian", "scalper", "momentum_only", "mean_revert", "odds_follower", "balanced"] as const;
 export type AgentStyle = typeof AGENT_STYLES[number];
 
 export const AGENT_DISPLAY_NAMES: Record<AgentStyle, string> = {
-  aggressive:   "Phiona 🔥",
-  conservative: "Danfo_Dave 🛡",
-  random:       "Fave 🎲",
-  trend:        "Mallam_Odds 📈",
-  contrarian:   "Alhaji_Pump ↩️",
+  aggressive:    "Phiona 🔥",
+  conservative:  "Danfo_Dave 🛡",
+  random:        "Fave 🎲",
+  trend:         "Mallam_Odds 📈",
+  contrarian:    "Alhaji_Pump ↩️",
+  scalper:       "Razor 🔪",
+  momentum_only: "Bullet 🚀",
+  mean_revert:   "Bouncer 🏀",
+  odds_follower: "Bookman 📖",
+  balanced:      "Zen 🧘",
 };
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
