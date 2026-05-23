@@ -265,8 +265,8 @@ export async function createFantasyLeagueGame(creatorTelegramId: number, entryFe
     const normalizedDurationHours = normalizeFantasyDurationHours(durationHours);
     const devUser = isDevUser(creatorTelegramId);
     const minFee = devUser ? DEV_MIN_ENTRY_FEE : FANTASY_MIN_ENTRY_FEE;
-    if (normalizedEntryFee < minFee || normalizedEntryFee > FANTASY_MAX_ENTRY_FEE || (!devUser && !Number.isInteger(normalizedEntryFee))) {
-      throw new Error(`Entry fee must be a whole number between $${FANTASY_MIN_ENTRY_FEE} and $${FANTASY_MAX_ENTRY_FEE}.`);
+    if (normalizedEntryFee < minFee || normalizedEntryFee > FANTASY_MAX_ENTRY_FEE || (!devUser && normalizedEntryFee !== 0.5 && !Number.isInteger(normalizedEntryFee))) {
+      throw new Error(`Entry fee must be $0.50, or a whole number between $${FANTASY_MIN_ENTRY_FEE} and $${FANTASY_MAX_ENTRY_FEE}.`);
     }
     const lobbyWaitMs = normalizedDurationHours === 1 ? 10 * 60 * 1000 : 30 * 60 * 1000;
     const startAt = new Date(Date.now() + lobbyWaitMs).toISOString();

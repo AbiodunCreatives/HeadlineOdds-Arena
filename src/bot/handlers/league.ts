@@ -238,7 +238,7 @@ function buildStartWelcomeText(): string {
     "Predict BTC UP or DOWN every 15 minutes.",
     "Best bankroll at the end wins the USDC prize pool.",
     "",
-    "👇 Fund your wallet first — entry fees start at $1.",
+    "👇 Fund your wallet first — entry fees start at $0.50.",
     "Winnings land back in your wallet instantly.",
   ].join("\n");
 }
@@ -382,23 +382,13 @@ function buildCreateArenaPickerText(balance: number): string {
 function buildCreateArenaPickerKeyboard(telegramId?: number): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
-  // First row: $1, $2, $5
-  keyboard.text("$1", "arena:create:1")
-    .text("$2", "arena:create:2")
-    .text("$5", "arena:create:5")
-    .row();
+  // Row 1: $0.50, $1
+  keyboard.text("$0.50", "arena:create:0.5").text("$1", "arena:create:1").row();
+  // Row 2: $2, $5
+  keyboard.text("$2", "arena:create:2").text("$5", "arena:create:5").row();
+  // Row 3: $10, Custom
+  keyboard.text("$10", "arena:create:10").text("✏️ Custom", ARENA_CREATE_CUSTOM);
 
-  // Second row: $10, Custom (if dev), Back
-  keyboard.text("$10", "arena:create:10");
-  
-  if (telegramId && isDevUser(telegramId)) {
-    keyboard.text("✏️ Custom", ARENA_CREATE_CUSTOM);
-  } else {
-    keyboard.text("📊 Chart", "chart");
-  }
-  
-  keyboard.text("🏟 Back", ARENA_BACK_TO_LOBBY);
-  
   return keyboard;
 }
 
@@ -828,32 +818,34 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
     });
 
   const withdrawalLines = summary.recentWithdrawals.length === 0
-    ? ["  None"]
-    : summary.recentWithdrawals.slice(0, 3).map((e) =>
-        `  ${e.status === "completed" ? "✅" : e.status === "failed" ? "❌" : "⏳"}  ${formatUsdc(e.amount)}  →  ${abbreviateAddress(e.destination_address)}`
-      );
+    ? ["  —"]
+    : summary.recentWithdrawals.slice(0, 3).map((e) => {
+        const icon = e.status === "completed" ? "done" : e.status === "failed" ? "failed" : "pending";
+        return `  <code>${formatUsdc(e.amount)}</code>  →  <code>${abbreviateAddress(e.destination_address)}</code>  [${icon}]`;
+      });
 
   const onrampCount = summary.recentOnramps.length;
   const onrampLines = onrampCount === 0
-    ? ["  None"]
+    ? ["  —"]
     : summary.recentOnramps.slice(0, 3).map((e) => {
         const amt = e.actual_usdc_amount > 0 ? e.actual_usdc_amount : e.expected_usdc_amount;
-        const icon = e.status.toUpperCase() === "COMPLETED" ? "✅" : e.status.toUpperCase() === "FAILED" ? "❌" : "⏳";
-        return `  ${icon}  ₦${Math.round(e.fiat_amount).toLocaleString("en-US")}  →  ${formatUsdc(amt)}`;
+        const icon = e.status.toUpperCase() === "COMPLETED" ? "done" : e.status.toUpperCase() === "FAILED" ? "failed" : "pending";
+        return `  <code>₦${Math.round(e.fiat_amount).toLocaleString("en-US")}</code>  →  <code>${formatUsdc(amt)}</code>  [${icon}]`;
       });
 
+  const addr = summary.wallet.owner_address;
+
   return [
-    "💳 Wallet",
+    "<b>WALLET</b>",
     "",
-    `Balance       \`${formatUsdc(summary.balance)}\``,
-    "─────────────────────────",
-    "📥 Deposit address",
-    `\`${summary.wallet.owner_address}\``,
+    `Balance\n<code>${formatUsdc(summary.balance)}</code>`,
     "",
-    `💰 NGN Top-ups${onrampCount > 0 ? `  (${onrampCount} recent)` : ""}`,
+    `Deposit Address\n<code>${addr}</code>`,
+    "",
+    `NGN Deposits`,
     ...onrampLines,
     "",
-    "📤 Withdrawals",
+    "Withdrawals",
     ...withdrawalLines,
   ].join("\n");
 }
@@ -861,13 +853,13 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
 // ── Wallet keyboard ──────────────────────────────────────────────────────────
 function buildWalletKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🔄 Refresh", WALLET_REFRESH)
-    .text("💵 Fund NGN", WALLET_NAIRA_HELP)
-    .text("💸 Offramp NGN", "offramp:start")
+    .text("Refresh", WALLET_REFRESH)
+    .text("Fund NGN", WALLET_NAIRA_HELP)
+    .text("Offramp NGN", "offramp:start")
     .row()
-    .text("🌐 Other chain", WALLET_CROSS_CHAIN)
-    .text("📤 Withdraw", WALLET_WITHDRAW_HELP)
-    .text("🏟 Arenas", WALLET_BACK);
+    .text("Other Chain", WALLET_CROSS_CHAIN)
+    .text("Withdraw USDC", WALLET_WITHDRAW_HELP)
+    .text("Arenas", WALLET_BACK);
 }
 
 function buildWalletCrossChainHelpText(): string {
@@ -898,25 +890,24 @@ function buildWalletCrossChainResultText(input: {
 }): string {
   const expiryMinutes = Math.round(input.expiresInSeconds / 60);
   return [
-    "🌐 Cross-Chain Deposit Ready",
+    "<b>CROSS-CHAIN DEPOSIT</b>",
     "",
-    `Send your ${input.originSymbol} to:`,
-    `  ${input.depositAddress}`,
+    `Send your ${input.originSymbol} to`,
+    `<code>${input.depositAddress}</code>`,
     "",
-    `Expected credit:  ~${formatUsdc(input.expectedUsdcOut)}`,
-    `Expires in:       ${expiryMinutes} minutes`,
+    `Expected credit  <code>~${formatUsdc(input.expectedUsdcOut)}</code>`,
+    `Expires in       ${expiryMinutes} min`,
     "",
-    "Once your transaction confirms, USDC will appear in your wallet automatically.",
-    "Use /wallet to check your balance.",
+    "USDC will appear in your wallet automatically after confirmation.",
   ].join("\n");
 }
 
 function buildWalletNairaHelpText(): string {
   return [
-    "💵 Fund with Naira",
+    "<b>FUND WITH NAIRA</b>",
     "",
-    "Pick an amount below — we'll generate a bank transfer order via PajCash.",
-    `Min: ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}  ·  Max: ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}`,
+    "Pick an amount — a bank transfer order will be generated via PajCash.",
+    `Min: <code>${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}</code>  ·  Max: <code>${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}</code>`,
     "",
     "Your balance updates once USDC lands in your wallet.",
   ].join("\n");
@@ -1435,7 +1426,8 @@ function buildTradeLockedKeyboard(code: string): InlineKeyboard {
 async function editTradePromptMessage(
   ctx: Context,
   text: string,
-  keyboard?: InlineKeyboard
+  keyboard?: InlineKeyboard,
+  parse_mode?: "HTML" | "MarkdownV2" | "Markdown"
 ): Promise<void> {
   const { chatId, messageId } = getPromptMessageRef(ctx);
 
@@ -1443,6 +1435,7 @@ async function editTradePromptMessage(
     try {
       await ctx.editMessageText(text, {
         reply_markup: keyboard ?? new InlineKeyboard(),
+        ...(parse_mode ? { parse_mode } : {}),
       });
       return;
     } catch (error) {
@@ -1455,11 +1448,11 @@ async function editTradePromptMessage(
   }
 
   if (keyboard) {
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, { reply_markup: keyboard, ...(parse_mode ? { parse_mode } : {}) });
     return;
   }
 
-  await ctx.reply(text);
+  await ctx.reply(text, parse_mode ? { parse_mode } : {});
 }
 
 async function renderArenaLobby(
@@ -1526,7 +1519,8 @@ async function renderWalletView(
   await editTradePromptMessage(
     ctx,
     buildWalletText(summary),
-    buildWalletKeyboard()
+    buildWalletKeyboard(),
+    "HTML"
   );
 }
 
@@ -2081,7 +2075,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     const handled = await handleCrossChainCallback(
       ctx, data,
-      (text, kb) => editTradePromptMessage(ctx, text, kb),
+      (text, kb) => editTradePromptMessage(ctx, text, kb, "HTML"),
       buildWalletKeyboard(),
       WALLET_BACK,
       WALLET_OPEN,
@@ -2095,7 +2089,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await editTradePromptMessage(
       ctx,
       buildWalletNairaHelpText(),
-      buildWalletNairaPickerKeyboard()
+      buildWalletNairaPickerKeyboard(),
+      "HTML"
     );
     return;
   }
@@ -2283,14 +2278,10 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
   }
 
   if (data === ARENA_CREATE_CUSTOM) {
-    if (!isDevUser(ctx.from.id)) {
-      await ctx.answerCallbackQuery("Not available.");
-      return;
-    }
     await savePendingCustomArenaFee(ctx.from.id);
     await editTradePromptMessage(
       ctx,
-      "✏️ Enter your custom entry fee (e.g. 0.20):",
+      `✏️ Enter your custom entry fee (e.g. 15):\nMin: $0.50  ·  Max: $50`,
       new InlineKeyboard().text("← Back", ARENA_CREATE)
     );
     return;

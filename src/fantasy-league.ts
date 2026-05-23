@@ -110,8 +110,8 @@ export { hasUsedFreeTrial, awardHloPoints, getHloPoints } from "./db/fantasy.ts"
 export const FANTASY_ASSET = "BTC" as const;
 export const FANTASY_ENTRY_MULTIPLIER = 100;
 export const FANTASY_COMMISSION_RATE = 0.08;
-export const FANTASY_MIN_ENTRY_FEE = 1;
-export const FANTASY_MAX_ENTRY_FEE = 10;
+export const FANTASY_MIN_ENTRY_FEE = 0.5;
+export const FANTASY_MAX_ENTRY_FEE = 50;
 export const FANTASY_TRADE_AMOUNTS = [10, 25, 50, 100] as const;
 export const FANTASY_DEFAULT_DURATION_HOURS = 24;
 

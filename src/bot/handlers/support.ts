@@ -29,13 +29,13 @@ The AI bots are automated players with distinct trading personalities. There are
 No. The AI bots use the same market data you see and make the same YES/NO decisions you do. They follow programmed strategies but can't predict the future any better than humans. In fact, human players often outperform the bots because you can adapt and use intuition while the bots stick to their rigid strategies.
 
 **What happens after I complete my free trial?**
-You earn 50 HLO points for completing your first arena, regardless of your ranking. These points unlock future features and rewards. You can then join real money arenas starting at just $1 entry fee to compete for actual USDC prizes.
+You earn 50 HLO points for completing your first arena, regardless of your ranking. These points unlock future features and rewards. You can then join real money arenas starting at just $0.50 entry fee to compete for actual USDC prizes.
 
 **How long do arenas last?**
 Free trial arenas last 1 hour with 4 trading rounds. Real money arenas last 24 hours with roughly 96 trading rounds. You can check the exact duration when creating or joining an arena.
 
 **Can I create my own arena with friends?**
-Yes! Use /league create [fee] to create an arena with any entry fee from $1 to $100. Share the arena code with friends so they can join. You can also join free trial arenas that other players create — no deposit needed.
+Yes! Use /league create [fee] to create an arena with any entry fee from $0.50 to $50. Share the arena code with friends so they can join. You can also join free trial arenas that other players create — no deposit needed.
 
 **Do I need to know about crypto to play?**
 No. You do not need any crypto knowledge to get started. You deposit naira from your Nigerian bank account, the bot handles everything else. The only decision you make each round is whether BTC will go UP or DOWN in the next 15 minutes — anyone can do that.

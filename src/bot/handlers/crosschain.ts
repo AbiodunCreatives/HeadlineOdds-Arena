@@ -122,13 +122,13 @@ export function buildCrossChainDepositAddressText(input: {
   expiresInSeconds: number;
 }): string {
   return [
-    "🌐 Cross-Chain Deposit Address",
+    "<b>CROSS-CHAIN DEPOSIT</b>",
     "",
-    `Send your ${input.originSymbol} to:`,
-    input.depositAddress,
+    `Send your ${input.originSymbol} to`,
+    `<code>${input.depositAddress}</code>`,
     "",
-    `Expected credit: ~${formatUsdc(input.expectedUsdcOut)}`,
-    `Expires in: ${Math.round(input.expiresInSeconds / 60)} min`,
+    `Expected credit  <code>~${formatUsdc(input.expectedUsdcOut)}</code>`,
+    `Expires in       ${Math.round(input.expiresInSeconds / 60)} min`,
     "",
     "USDC arrives automatically once your transaction confirms.",
   ].join("\n");
