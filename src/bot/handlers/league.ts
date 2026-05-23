@@ -282,12 +282,12 @@ function buildStartOnboardingText(input: {
   const name = input.firstName.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   const balance = input.balance.toFixed(2).replace(/[.]/g, '\\$&');
   return [
-    `*HeadlineOdds Arena*`,
+    `🏟 *HeadlineOdds Arena*`,
     "",
     `Welcome back, ${name}\\!`,
     `Pick an arena, call BTC UP or DOWN, win USDC\\.`,
     "",
-    `Balance: \`$${balance} USDC\``,
+    `💳 *Balance:* \`$${balance} USDC\``,
   ].join("\n");
 }
 
@@ -724,17 +724,17 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
       });
 
   return [
-    "Wallet",
+    "💳 Wallet",
     "",
     `Balance       ${formatUsdc(summary.balance)}`,
     "─────────────────────────",
-    "Deposit address",
-    `\`${summary.wallet.owner_address}\``,
+    "📥 Deposit address",
+    summary.wallet.owner_address,
     "",
-    `NGN Top-ups${onrampCount > 0 ? `  (${onrampCount} recent)` : ""}`,
+    `💰 NGN Top-ups${onrampCount > 0 ? `  (${onrampCount} recent)` : ""}`,
     ...onrampLines,
     "",
-    "Withdrawals",
+    "📤 Withdrawals",
     ...withdrawalLines,
   ].join("\n");
 }
@@ -1318,8 +1318,7 @@ function buildTradeLockedKeyboard(code: string): InlineKeyboard {
 async function editTradePromptMessage(
   ctx: Context,
   text: string,
-  keyboard?: InlineKeyboard,
-  parseMode?: "Markdown" | "MarkdownV2" | "HTML"
+  keyboard?: InlineKeyboard
 ): Promise<void> {
   const { chatId, messageId } = getPromptMessageRef(ctx);
 
@@ -1327,7 +1326,6 @@ async function editTradePromptMessage(
     try {
       await ctx.editMessageText(text, {
         reply_markup: keyboard ?? new InlineKeyboard(),
-        parse_mode: parseMode,
       });
       return;
     } catch (error) {
@@ -1340,11 +1338,11 @@ async function editTradePromptMessage(
   }
 
   if (keyboard) {
-    await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
+    await ctx.reply(text, { reply_markup: keyboard });
     return;
   }
 
-  await ctx.reply(text, { parse_mode: parseMode });
+  await ctx.reply(text);
 }
 
 async function renderArenaLobby(
@@ -1411,8 +1409,7 @@ async function renderWalletView(
   await editTradePromptMessage(
     ctx,
     buildWalletText(summary),
-    buildWalletKeyboard(),
-    "Markdown"
+    buildWalletKeyboard()
   );
 }
 
@@ -1843,16 +1840,9 @@ export async function handleStart(ctx: Context): Promise<void> {
   const balance = await getBalance(ctx.from.id);
 
   if (balance <= 0) {
-    await ctx.reply(
-      buildStartOnboardingText({
-        firstName: ctx.from.first_name?.trim() || "there",
-        balance,
-      }),
-      {
-        parse_mode: "MarkdownV2",
-        reply_markup: buildStartWelcomeKeyboard(),
-      }
-    );
+    await ctx.reply(buildStartWelcomeText(), {
+      reply_markup: buildStartWelcomeKeyboard(),
+    });
     return;
   }
 
