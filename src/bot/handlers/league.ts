@@ -1119,6 +1119,10 @@ function buildArenaLiveKeyboard(input: {
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
+  if (config.ARENA_URL) {
+    keyboard.webApp("⚡ Trade", `${config.ARENA_URL}/trade?code=${input.code}`).row();
+  }
+
   if (input.marketUrl) {
     keyboard.url("View market", input.marketUrl);
   }

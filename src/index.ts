@@ -43,6 +43,11 @@ import {
   stopSolanaWalletMonitor,
 } from "./solana-wallet-monitor.ts";
 import { redis } from "./utils/rateLimit.ts";
+import { getCurrentRoundSnapshot } from "./bayse-market.ts";
+import { getFantasyLeagueStatusView } from "./fantasy-game.ts";
+import { getLatestFantasyTradeForMember } from "./db/fantasy.ts";
+import { saveFantasyTradeReference } from "./fantasy-state.ts";
+import { placeFantasyTradeFromCallbackData } from "./fantasy-league.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
 
 const bot = new Bot(config.BOT_TOKEN);
@@ -145,6 +150,25 @@ bot.on("message:text", async (ctx, next) => {
 
   await next();
 });
+
+bot.on("message:web_app_data", wrap(async (ctx) => {
+  if (!ctx.from) return;
+  const raw = ctx.message?.web_app_data?.data ?? "";
+  let payload: { action?: string; direction?: string; amount?: number; ref?: string };
+  try { payload = JSON.parse(raw); } catch { return; }
+  if (payload.action !== "trade" || !payload.direction || !payload.amount || !payload.ref) return;
+
+  const callbackData = `flt:d:${payload.amount}:${payload.direction}:r:${payload.ref}`;
+  try {
+    const result = await placeFantasyTradeFromCallbackData({ telegramId: ctx.from.id, callbackData });
+    await ctx.reply(
+      `✅ Trade placed! ${result.direction === "UP" ? "↑ YES" : "↓ NO"} · ${result.stake} USDC · Round #${result.roundNumber}\nBalance: $${result.remainingBalance.toFixed(2)}`,
+      { parse_mode: undefined }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ ${err instanceof Error ? err.message : "Trade failed. Please try again."}`);
+  }
+}));
 
 bot.catch((error) => {
   console.error(
@@ -264,6 +288,72 @@ app.get("/health", healthRateLimit, async (req, res) => {
       gamesResult.status === "fulfilled" ? (gamesResult.value.count ?? 0) : null,
     redis_keys: redisResult.status === "fulfilled" ? redisResult.value : null,
   });
+});
+
+app.get("/api/trade-state", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const tgId = Number(req.query["tgId"]);
+  const code = String(req.query["code"] ?? "").trim().toUpperCase();
+  if (!tgId || !code) { res.status(400).json({ error: "tgId and code required" }); return; }
+
+  try {
+    const [view, snapshot] = await Promise.all([
+      getFantasyLeagueStatusView(tgId, code),
+      getCurrentRoundSnapshot("BTC"),
+    ]);
+
+    const me = view.me;
+    if (!me) { res.status(403).json({ error: "Not a member of this arena" }); return; }
+
+    const pricing = snapshot?.pricing ?? null;
+    const round = snapshot?.round ?? null;
+    const roundOpenMs = round ? Date.parse(round.openingDate) : null;
+    const roundCloseMs = round ? Date.parse(round.closingDate) : null;
+    const tradeWindowOpen = roundOpenMs !== null && roundCloseMs !== null
+      ? Date.now() < roundOpenMs + (roundCloseMs - roundOpenMs) * 0.2
+      : false;
+
+    const lastTrade = await getLatestFantasyTradeForMember(view.game.id, tgId);
+    const lockedThisRound = lastTrade && round
+      ? lastTrade.event_id === round.eventId
+      : false;
+
+    let ref = "";
+    if (tradeWindowOpen && !lockedThisRound && pricing && round) {
+      const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+      const currentPrice = await getRoundCurrentPrice(pricing);
+      ref = await saveFantasyTradeReference({
+        gameId: view.game.id, eventId: round.eventId, marketId: pricing.marketId,
+        openingDate: round.openingDate, closingDate: round.closingDate,
+        currentPrice, referencePrice: pricing.eventThreshold,
+        upPrice: pricing.upPrice, downPrice: pricing.downPrice,
+        upOutcomeId: pricing.upOutcomeId, downOutcomeId: pricing.downOutcomeId,
+      });
+    }
+
+    res.json({
+      gameCode: view.game.code,
+      roundNumber: view.roundsPlayed + 1,
+      btcPrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
+      referencePrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
+      upPrice: pricing?.upPrice ?? 0.5,
+      downPrice: pricing?.downPrice ?? 0.5,
+      roundClosingDate: round?.closingDate ?? null,
+      arenaEndAt: view.game.end_at,
+      virtualBalance: me.virtual_balance,
+      virtualStartBalance: view.game.virtual_start_balance,
+      place: me.place,
+      memberCount: view.memberCount,
+      prizeIfEndedNow: view.prizeIfEndedNow,
+      tradeWindowOpen,
+      lockedDirection: lockedThisRound ? lastTrade!.direction : null,
+      lockedAmount: lockedThisRound ? lastTrade!.stake : null,
+      ref,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Internal error";
+    res.status(500).json({ error: msg });
+  }
 });
 
 app.post("/webhook/pajcash/:secret", pajcashWebhookRateLimit, async (req, res) => {
