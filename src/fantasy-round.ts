@@ -453,7 +453,10 @@ export async function processFantasyLeagueRound(round: Round, pricing: RoundPric
     await updateFantasyGame({ gameId: game.id, lastRoundEventId: pricing.eventId });
     // Bots auto-trade in free trial arenas
     if (game.is_free_trial) {
-      runBotTradesForRound(game, pricing).catch((e) => {
+      const prevRef = game.last_round_event_id
+        ? await loadFantasyTradeReference(game.last_round_event_id).catch(() => null)
+        : null;
+      runBotTradesForRound(game, pricing, prevRef?.upPrice ?? null).catch((e) => {
         console.warn(`[arena-bots] Auto-trade failed for arena ${game.code}:`, e);
       });
     }

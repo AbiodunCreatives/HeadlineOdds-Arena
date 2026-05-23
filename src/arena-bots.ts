@@ -11,6 +11,7 @@ import {
 import { getTradeQuote } from "./bayse-market.ts";
 import { FANTASY_TRADE_AMOUNTS, roundMoney } from "./fantasy-league.ts";
 import type { RoundPricing } from "./bayse-market.ts";
+import { getMarketSignals } from "./agent-signals.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -22,43 +23,107 @@ interface ArenaBotRow {
   style: BotStyle;
 }
 
+// ── Kelly stake sizing ────────────────────────────────────────────────────────
+
+/**
+ * Kelly fraction: f = (bp - q) / b
+ *   b = odds - 1 (payout ratio), p = win probability, q = 1 - p
+ * Returns a fraction of bankroll [0, 1], capped per style.
+ */
+function kellyStake(
+  winProbability: number,
+  entryPrice: number,
+  virtualBalance: number,
+  maxFraction: number
+): number {
+  const b = (1 / Math.max(0.01, entryPrice)) - 1; // net odds
+  const p = Math.max(0.01, Math.min(0.99, winProbability));
+  const q = 1 - p;
+  const fraction = Math.max(0, (b * p - q) / b);
+  const capped = Math.min(fraction, maxFraction);
+  const raw = capped * virtualBalance;
+  // Snap to nearest valid trade amount
+  const amounts = FANTASY_TRADE_AMOUNTS;
+  return amounts.reduce((best, amt) =>
+    Math.abs(amt - raw) < Math.abs(best - raw) ? amt : best
+  , amounts[0]);
+}
+
 // ── Bot decision logic ────────────────────────────────────────────────────────
 
 /**
- * Each style picks a direction and stake amount.
- * `upPrice` < 0.5 means market leans DOWN (UP is the underdog).
+ * Signal-based decision per agent style.
+ *
+ * composite signal in [-1,+1]:
+ *   > 0  → UP signal
+ *   < 0  → DOWN signal
+ *
+ * Each style interprets the signal differently:
+ *   aggressive   — follows signal strongly, high Kelly cap (40% bankroll)
+ *   conservative — follows signal only when confident, low Kelly cap (10%)
+ *   trend        — follows signal with medium Kelly cap (20%)
+ *   contrarian   — fades the signal (bets opposite), medium Kelly cap (25%)
+ *   random       — ignores signal, random direction, random stake
  */
-function botDecision(
+export function botDecision(
   style: BotStyle,
   pricing: RoundPricing,
-  virtualBalance: number
+  virtualBalance: number,
+  compositeSignal: number  // [-1, +1]
 ): { direction: "UP" | "DOWN"; stake: number } {
-  const marketLeanUp = pricing.upPrice <= 0.5; // market thinks UP is more likely
   const amounts = FANTASY_TRADE_AMOUNTS;
+
+  if (style === "random") {
+    return {
+      direction: Math.random() < 0.5 ? "UP" : "DOWN",
+      stake: amounts[Math.floor(Math.random() * amounts.length)]!,
+    };
+  }
+
+  // Determine direction from signal
+  let signalDir: "UP" | "DOWN";
+  let winProbability: number;
+  let maxKellyFraction: number;
+  let confidenceThreshold: number;
 
   switch (style) {
     case "aggressive":
-      // Always bets big on the market favourite
-      return { direction: marketLeanUp ? "UP" : "DOWN", stake: amounts[3] };
-
+      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(compositeSignal) * 0.2; // 50–70%
+      maxKellyFraction = 0.40;
+      confidenceThreshold = 0.0; // always trades
+      break;
     case "conservative":
-      // Bets small on the market favourite
-      return { direction: marketLeanUp ? "UP" : "DOWN", stake: amounts[0] };
-
-    case "random": {
-      const dir = Math.random() < 0.5 ? "UP" : "DOWN";
-      const stake = amounts[Math.floor(Math.random() * amounts.length)];
-      return { direction: dir as "UP" | "DOWN", stake };
-    }
-
+      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(compositeSignal) * 0.15;
+      maxKellyFraction = 0.10;
+      confidenceThreshold = 0.3; // only trades when signal is clear
+      break;
     case "trend":
-      // Follows the favourite with a medium stake
-      return { direction: marketLeanUp ? "UP" : "DOWN", stake: amounts[1] };
-
+      signalDir = compositeSignal >= 0 ? "UP" : "DOWN";
+      winProbability = 0.5 + Math.abs(compositeSignal) * 0.18;
+      maxKellyFraction = 0.20;
+      confidenceThreshold = 0.1;
+      break;
     case "contrarian":
-      // Bets against the market favourite
-      return { direction: marketLeanUp ? "DOWN" : "UP", stake: amounts[2] };
+      // Fades the signal
+      signalDir = compositeSignal >= 0 ? "DOWN" : "UP";
+      winProbability = 0.5 + Math.abs(compositeSignal) * 0.12;
+      maxKellyFraction = 0.25;
+      confidenceThreshold = 0.2;
+      break;
   }
+
+  // Fall back to market favourite if signal is below confidence threshold
+  if (Math.abs(compositeSignal) < confidenceThreshold) {
+    signalDir = pricing.upPrice <= 0.5 ? "UP" : "DOWN";
+    winProbability = 0.52; // slight edge assumed
+  }
+
+  const entryPrice = signalDir === "UP" ? pricing.upPrice : pricing.downPrice;
+  const stake = kellyStake(winProbability, entryPrice, virtualBalance, maxKellyFraction);
+
+  return { direction: signalDir, stake };
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -92,13 +157,19 @@ export async function seedBotsIntoFreeTrialGame(game: FantasyGame): Promise<void
 
 /**
  * Called each round for a free trial game.
- * Each bot that hasn't traded yet places a trade based on its style.
+ * Fetches live market signals once, then each bot decides independently.
  */
 export async function runBotTradesForRound(
   game: FantasyGame,
-  pricing: RoundPricing
+  pricing: RoundPricing,
+  previousUpPrice: number | null = null
 ): Promise<void> {
   const bots = await loadArenaBots();
+
+  // Fetch signals once for all bots (shared market view)
+  const signals = await getMarketSignals(pricing.upPrice, previousUpPrice).catch(() => ({
+    momentum: 0, rsi: 0, oddsDrift: 0, composite: 0,
+  }));
 
   await Promise.all(
     bots.map(async (bot) => {
@@ -115,10 +186,14 @@ export async function runBotTradesForRound(
           .eq("event_id", pricing.eventId);
         if ((count ?? 0) > 0) return;
 
-        const { direction, stake } = botDecision(bot.style, pricing, member.virtual_balance);
-        if (member.virtual_balance < stake) return; // can't afford, skip
+        const { direction, stake } = botDecision(
+          bot.style as BotStyle,
+          pricing,
+          member.virtual_balance,
+          signals.composite
+        );
+        if (member.virtual_balance < stake) return;
 
-        // Get a real quote so shares are calculated correctly
         const outcomeId = direction === "UP" ? pricing.upOutcomeId : pricing.downOutcomeId;
         if (!outcomeId) return;
 
@@ -146,8 +221,7 @@ export async function runBotTradesForRound(
           shares,
         });
       } catch (error) {
-        // Non-fatal: log and continue so one bot failure doesn't block others
-        console.warn(`[arena-bots] Bot ${bot.telegram_id} (${bot.style}) failed to trade round ${pricing.eventId}:`, error);
+        console.warn(`[arena-bots] Bot ${bot.telegram_id} (${bot.style}) failed round ${pricing.eventId}:`, error);
       }
     })
   );
