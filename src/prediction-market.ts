@@ -33,30 +33,37 @@ function round(v: number): number {
 
 export function calcOdds(yesPool: number, noPool: number): { yes: number; no: number } {
   const total = yesPool + noPool;
-  if (total === 0) return { yes: 2.0, no: 2.0 };
+  if (total === 0) return { yes: 0.5, no: 0.5 };
   return {
-    yes: round(total / Math.max(yesPool, 0.000001)),
-    no: round(total / Math.max(noPool, 0.000001)),
+    yes: round(yesPool / total),
+    no: round(noPool / total),
   };
 }
 
-export function formatOdds(odds: number): string {
-  return `${odds.toFixed(2)}x`;
+// Returns implied probability as ₦ price (e.g. 0.53 → "₦53")
+export function formatOdds(prob: number): string {
+  return `₦${Math.round(prob * 100)}`;
 }
 
-// Approximate NGN/USD rate — update periodically
-const NGN_PER_USD = 1600;
-
 // ── Market text ───────────────────────────────────────────────────────────────
+
+const NGN_PER_USD = 1600;
 
 export function buildMarketText(market: PredictionMarket): string {
   const odds = calcOdds(market.yes_pool, market.no_pool);
   const total = round(market.yes_pool + market.no_pool);
-  const totalNgn = Math.round(total * NGN_PER_USD).toLocaleString("en-NG");
+  const totalNgn = Math.round(total * NGN_PER_USD);
+  const totalNgnFmt = totalNgn >= 1_000_000
+    ? `₦${(totalNgn / 1_000_000).toFixed(1)}M`
+    : totalNgn >= 1_000
+    ? `₦${Math.round(totalNgn / 1_000)}K`
+    : `₦${totalNgn}`;
+
   const closes = new Date(market.closes_at).toLocaleString("en-NG", {
     timeZone: "Africa/Lagos",
-    dateStyle: "medium",
-    timeStyle: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
   });
 
   const statusLine =
@@ -64,16 +71,13 @@ export function buildMarketText(market: PredictionMarket): string {
       ? `✅ *Resolved: ${market.outcome}*`
       : market.status === "closed"
       ? `🔒 Betting closed`
-      : `⏳ Closes: ${closes}`;
+      : `⏳ Ends ${closes}`;
 
   return (
     `🔥 *HeadlineOdds Market*\n\n` +
     `${market.question}\n\n` +
-    `━━━━━━━━━━━━━━━━\n` +
-    `✅ YES  ${formatOdds(odds.yes)}  |  ❌ NO  ${formatOdds(odds.no)}\n` +
-    `💰 Pool: $${total.toFixed(2)} USDC (~₦${totalNgn})\n` +
-    `${statusLine}\n` +
-    `━━━━━━━━━━━━━━━━`
+    `Buy Yes — *${formatOdds(odds.yes)}*   Buy No — *${formatOdds(odds.no)}*\n\n` +
+    `💰 ${totalNgnFmt} pool   ${statusLine}`
   );
 }
 
