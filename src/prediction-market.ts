@@ -44,11 +44,15 @@ export function formatOdds(odds: number): string {
   return `${odds.toFixed(2)}x`;
 }
 
+// Approximate NGN/USD rate — update periodically
+const NGN_PER_USD = 1600;
+
 // ── Market text ───────────────────────────────────────────────────────────────
 
 export function buildMarketText(market: PredictionMarket): string {
   const odds = calcOdds(market.yes_pool, market.no_pool);
   const total = round(market.yes_pool + market.no_pool);
+  const totalNgn = Math.round(total * NGN_PER_USD).toLocaleString("en-NG");
   const closes = new Date(market.closes_at).toLocaleString("en-NG", {
     timeZone: "Africa/Lagos",
     dateStyle: "medium",
@@ -57,17 +61,19 @@ export function buildMarketText(market: PredictionMarket): string {
 
   const statusLine =
     market.status === "resolved"
-      ? `\n✅ *Resolved: ${market.outcome}*`
+      ? `✅ *Resolved: ${market.outcome}*`
       : market.status === "closed"
-      ? "\n🔒 Betting closed"
-      : `\n⏰ Closes: ${closes}`;
+      ? `🔒 Betting closed`
+      : `⏳ Closes: ${closes}`;
 
   return (
-    `🎯 *Prediction Market*\n\n` +
-    `${market.question}\n` +
-    `${statusLine}\n\n` +
-    `💰 Volume: *$${total.toFixed(2)} USDC*\n` +
-    `✅ YES — ${formatOdds(odds.yes)}  |  ❌ NO — ${formatOdds(odds.no)}`
+    `🔥 *HeadlineOdds Market*\n\n` +
+    `${market.question}\n\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `✅ YES  ${formatOdds(odds.yes)}  |  ❌ NO  ${formatOdds(odds.no)}\n` +
+    `💰 Pool: $${total.toFixed(2)} USDC (~₦${totalNgn})\n` +
+    `${statusLine}\n` +
+    `━━━━━━━━━━━━━━━━`
   );
 }
 
