@@ -19,6 +19,16 @@ import {
   saveBroadcastMessageIds,
 } from "../../prediction-market.ts";
 import {
+  savePendingMarketBet,
+  loadPendingMarketBet,
+  clearPendingMarketBet,
+  savePendingMarketBetCustom,
+  hasPendingMarketBetCustom,
+  clearPendingMarketBetCustom,
+} from "../../fantasy-state.ts";
+
+const NGN_PER_USD = 1600;
+import {
   buildFantasyTradeStakeSelection,
   clearPendingFantasyCustomFundAmount,
   clearFantasyTradePromptState,
@@ -3521,7 +3531,7 @@ export async function handleResolveMarket(ctx: Context): Promise<void> {
   await ctx.reply(`✅ Market resolved as *${outcome}*. ${payouts.length} winner(s) paid out.`, { parse_mode: "Markdown" });
 }
 
-// Callback: pm:yes:<id> or pm:no:<id>
+// Callback: pm:yes:<id> or pm:no:<id> — show amount selection
 export async function handleMarketBet(ctx: Context): Promise<void> {
   if (!ctx.from) return;
   await ctx.answerCallbackQuery();
@@ -3531,48 +3541,93 @@ export async function handleMarketBet(ctx: Context): Promise<void> {
   if (!marketId || (side !== "yes" && side !== "no")) return;
 
   const betSide = side.toUpperCase() as "YES" | "NO";
-  const DEFAULT_BET = 1; // $1 USDC per tap
 
   const market = await getMarket(marketId);
-  if (!market) {
-    await ctx.answerCallbackQuery({ text: "Market not found.", show_alert: true });
-    return;
-  }
+  if (!market) { await ctx.answerCallbackQuery({ text: "Market not found.", show_alert: true }); return; }
   if (market.status !== "open" || new Date(market.closes_at) < new Date()) {
-    await ctx.answerCallbackQuery({ text: "This market is no longer accepting bets.", show_alert: true });
-    return;
+    await ctx.answerCallbackQuery({ text: "This market is no longer accepting bets.", show_alert: true }); return;
   }
-
   const existing = await getUserBet(marketId, ctx.from.id);
   if (existing) {
-    await ctx.answerCallbackQuery({ text: `You already bet ${existing.side} on this market.`, show_alert: true });
+    await ctx.answerCallbackQuery({ text: `You already bet ${existing.side} on this market.`, show_alert: true }); return;
+  }
+
+  await savePendingMarketBet(ctx.from.id, { marketId, side: betSide });
+
+  const odds = calcOdds(market.yes_pool, market.no_pool);
+  const prob = betSide === "YES" ? odds.yes : odds.no;
+  const keyboard = new InlineKeyboard()
+    .text("₦500", `pma:500:${marketId}:${side}`).text("₦1,000", `pma:1000:${marketId}:${side}`).row()
+    .text("₦5,000", `pma:5000:${marketId}:${side}`).text("Custom ✏️", `pma:custom:${marketId}:${side}`);
+
+  await ctx.reply(
+    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ${formatOdds(prob)}\n\n*${market.question}*\n\nHow much do you want to bet?`,
+    { parse_mode: "Markdown", reply_markup: keyboard }
+  );
+}
+
+// Callback: pma:<amount|custom>:<market_id>:<side>
+export async function handleMarketBetAmount(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  await ctx.answerCallbackQuery();
+
+  const data = ctx.callbackQuery?.data ?? "";
+  const parts = data.split(":");
+  // pma:amount:marketId:side  — but marketId is a UUID with dashes so split carefully
+  const amountStr = parts[1];
+  const side = parts[parts.length - 1] as "yes" | "no";
+  const marketId = parts.slice(2, parts.length - 1).join(":");
+
+  if (amountStr === "custom") {
+    await savePendingMarketBetCustom(ctx.from.id);
+    await ctx.reply("Enter your bet amount in naira (e.g. 2500):");
     return;
   }
 
+  const ngnAmount = Number.parseInt(amountStr, 10);
+  if (!Number.isFinite(ngnAmount) || ngnAmount <= 0) return;
+
+  await placePredictionBet(ctx, marketId, side.toUpperCase() as "YES" | "NO", ngnAmount);
+}
+
+// Text input: custom NGN amount for pending market bet
+export async function handleMarketBetCustom(ctx: Context): Promise<boolean> {
+  if (!ctx.from) return false;
+  if (!(await hasPendingMarketBetCustom(ctx.from.id))) return false;
+
+  const text = (ctx.message?.text ?? "").replace(/[^0-9]/g, "");
+  const ngnAmount = Number.parseInt(text, 10);
+
+  if (!Number.isFinite(ngnAmount) || ngnAmount < 500) {
+    await ctx.reply("Minimum bet is ₦500. Enter a valid amount:");
+    return true;
+  }
+
+  await clearPendingMarketBetCustom(ctx.from.id);
+
+  const pending = await loadPendingMarketBet(ctx.from.id);
+  if (!pending) { await ctx.reply("Session expired. Please tap YES or NO again."); return true; }
+
+  await placePredictionBet(ctx, pending.marketId, pending.side, ngnAmount);
+  return true;
+}
+
+// Shared bet placement logic
+async function placePredictionBet(ctx: Context, marketId: string, side: "YES" | "NO", ngnAmount: number): Promise<void> {
+  if (!ctx.from) return;
+  const usdcAmount = Math.round((ngnAmount / NGN_PER_USD) * 1_000_000) / 1_000_000;
+
   try {
-    const { market: updated } = await placeBet({
-      marketId,
-      telegramId: ctx.from.id,
-      side: betSide,
-      amount: DEFAULT_BET,
-    });
+    const { market: updated } = await placeBet({ marketId, telegramId: ctx.from.id, side, amount: usdcAmount });
+    await clearPendingMarketBet(ctx.from.id);
 
     const odds = calcOdds(updated.yes_pool, updated.no_pool);
-    await ctx.answerCallbackQuery({
-      text: `✅ Bet placed: ${betSide} @ ${formatOdds(betSide === "YES" ? odds.yes : odds.no)}`,
-      show_alert: true,
-    });
-
-    // Refresh the user's own message with updated odds
-    const newText = buildMarketText(updated);
-    const keyboard = new InlineKeyboard()
-      .text("✅ YES", `pm:yes:${marketId}`)
-      .text("❌ NO", `pm:no:${marketId}`);
-    await ctx.editMessageText(newText, { parse_mode: "Markdown", reply_markup: keyboard }).catch(() => null);
+    const prob = side === "YES" ? odds.yes : odds.no;
+    await ctx.reply(
+      `✅ Bet placed!\n\n*${side}* on "${updated.question}"\n₦${ngnAmount.toLocaleString()} (~$${usdcAmount.toFixed(2)} USDC) @ ${formatOdds(prob)}`,
+      { parse_mode: "Markdown" }
+    );
   } catch (err) {
-    await ctx.answerCallbackQuery({
-      text: err instanceof Error ? err.message : "Failed to place bet.",
-      show_alert: true,
-    });
+    await ctx.reply(`❌ ${err instanceof Error ? err.message : "Failed to place bet."}`);
   }
 }

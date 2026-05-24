@@ -294,3 +294,38 @@ export async function consumeFantasyNextRoundReminder(gameId: string, telegramId
   }
   return deleted > 0;
 }
+
+// ── Prediction market pending bet ─────────────────────────────────────────────
+
+const PM_BET_PENDING_TTL = 5 * 60;
+
+export interface PendingMarketBet {
+  marketId: string;
+  side: "YES" | "NO";
+}
+
+export async function savePendingMarketBet(telegramId: number, bet: PendingMarketBet): Promise<void> {
+  await redis.set(`pm:bet:pending:${telegramId}`, JSON.stringify(bet), "EX", PM_BET_PENDING_TTL);
+}
+
+export async function loadPendingMarketBet(telegramId: number): Promise<PendingMarketBet | null> {
+  const raw = await redis.get(`pm:bet:pending:${telegramId}`);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PendingMarketBet; } catch { return null; }
+}
+
+export async function clearPendingMarketBet(telegramId: number): Promise<void> {
+  await redis.del(`pm:bet:pending:${telegramId}`);
+}
+
+export async function savePendingMarketBetCustom(telegramId: number): Promise<void> {
+  await redis.set(`pm:bet:custom:${telegramId}`, "1", "EX", PM_BET_PENDING_TTL);
+}
+
+export async function hasPendingMarketBetCustom(telegramId: number): Promise<boolean> {
+  return Boolean(await redis.get(`pm:bet:custom:${telegramId}`));
+}
+
+export async function clearPendingMarketBetCustom(telegramId: number): Promise<void> {
+  await redis.del(`pm:bet:custom:${telegramId}`);
+}

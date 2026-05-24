@@ -29,6 +29,8 @@ import {
   handleCreateMarket,
   handleResolveMarket,
   handleMarketBet,
+  handleMarketBetAmount,
+  handleMarketBetCustom,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -131,16 +133,17 @@ bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
+bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
 bot.callbackQuery("fantasy:join:decline", wrap(handleFantasyJoinDecline));
 bot.on("message:text", async (ctx, next) => {
   const handled = await handleFantasyTextInput(ctx);
+  if (handled) return;
 
-  if (handled) {
-    return;
-  }
+  // Prediction market custom bet amount
+  if (await handleMarketBetCustom(ctx)) return;
 
   // Plain-text messages that aren't commands or handled inputs go to support agent
   const text = ctx.message?.text ?? "";
