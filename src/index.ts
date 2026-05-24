@@ -5,7 +5,7 @@ import express from "express";
 import { Bot, type Context } from "grammy";
 
 import { registerAdminDashboard } from "./admin-dashboard.ts";
-import { getBtcChartMenuUrl, registerBtcChartMenuPage } from "./btc-chart-menu.ts";
+import { registerBtcChartMenuPage } from "./btc-chart-menu.ts";
 import {
   handleBoard,
   handleChart,
@@ -26,6 +26,9 @@ import {
   handleWithdraw,
   handleWallet,
   handleAdminWithdraw,
+  handleCreateMarket,
+  handleResolveMarket,
+  handleMarketBet,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -125,6 +128,9 @@ bot.command("fundngn", wrap(handleFundNgn));
 bot.command("offrampngn", wrap(handleOfframpNgn));
 bot.command("withdraw", wrap(handleWithdraw));
 bot.command("adminwithdraw", wrap(handleAdminWithdraw));
+bot.command("createmarket", wrap(handleCreateMarket));
+bot.command("resolvemarket", wrap(handleResolveMarket));
+bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
@@ -536,15 +542,15 @@ async function main(): Promise<void> {
     },
   ]);
 
-  const chartMenuUrl = getBtcChartMenuUrl();
+  const tradeMenuUrl = config.ARENA_URL ? `${config.ARENA_URL}/trade` : null;
 
-  if (chartMenuUrl) {
+  if (tradeMenuUrl) {
     await bot.api.setChatMenuButton({
       menu_button: {
         type: "web_app",
-        text: "BTC Chart",
+        text: "Trade",
         web_app: {
-          url: chartMenuUrl,
+          url: tradeMenuUrl,
         },
       },
     });

@@ -7,6 +7,18 @@ import { getBtcChartMenuUrl } from "../../btc-chart-menu.ts";
 import { config } from "../../config.ts";
 import { getBalance } from "../../db/balances.ts";
 import {
+  buildMarketText,
+  calcOdds,
+  createMarket,
+  formatOdds,
+  getMarket,
+  getUserBet,
+  listAllUsers,
+  placeBet,
+  resolveMarket,
+  saveBroadcastMessageIds,
+} from "../../prediction-market.ts";
+import {
   buildFantasyTradeStakeSelection,
   clearPendingFantasyCustomFundAmount,
   clearFantasyTradePromptState,
@@ -3404,5 +3416,163 @@ export async function handleAdminWithdraw(ctx: Context): Promise<void> {
     await ctx.reply(`✅ Sent $${amount} USDC to ${destination}\nSignature: ${result.signature}`)
   } catch (error) {
     await ctx.reply(`❌ Transfer failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+// ── Prediction Market handlers ────────────────────────────────────────────────
+
+// /createmarket <closes_in_hours> <question...>
+// e.g. /createmarket 72 Will ADC sue Peter Obi before September?
+export async function handleCreateMarket(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
+    await ctx.reply("⛔ Unauthorized.");
+    return;
+  }
+
+  const parts = (ctx.message?.text ?? "").split(/\s+/).slice(1);
+  const hours = Number.parseFloat(parts[0] ?? "");
+  const question = parts.slice(1).join(" ").trim();
+
+  if (!Number.isFinite(hours) || hours <= 0 || !question) {
+    await ctx.reply("Usage: /createmarket <closes_in_hours> <question>\nExample: /createmarket 72 Will ADC sue Peter Obi before September?");
+    return;
+  }
+
+  const closesAt = new Date(Date.now() + hours * 3_600_000);
+  const market = await createMarket({ question, closesAt, createdBy: ctx.from.id });
+
+  const text = buildMarketText(market);
+  const keyboard = new InlineKeyboard()
+    .text("✅ YES", `pm:yes:${market.id}`)
+    .text("❌ NO", `pm:no:${market.id}`);
+
+  // Broadcast to all users
+  const users = await listAllUsers();
+  const sent: { chat_id: number; message_id: number }[] = [];
+
+  for (const user of users) {
+    try {
+      const msg = await ctx.api.sendMessage(user.telegram_id, text, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      });
+      sent.push({ chat_id: user.telegram_id, message_id: msg.message_id });
+    } catch {
+      // User may have blocked the bot — skip silently
+    }
+  }
+
+  await saveBroadcastMessageIds(market.id, sent);
+  await ctx.reply(`✅ Market created and broadcast to ${sent.length} users.\nID: \`${market.id}\``, { parse_mode: "Markdown" });
+}
+
+// /resolvemarket <market_id> <YES|NO>
+export async function handleResolveMarket(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
+    await ctx.reply("⛔ Unauthorized.");
+    return;
+  }
+
+  const parts = (ctx.message?.text ?? "").split(/\s+/).slice(1);
+  const marketId = parts[0]?.trim() ?? "";
+  const outcome = parts[1]?.toUpperCase().trim() as "YES" | "NO" | undefined;
+
+  if (!marketId || (outcome !== "YES" && outcome !== "NO")) {
+    await ctx.reply("Usage: /resolvemarket <market_id> <YES|NO>");
+    return;
+  }
+
+  const { market, payouts } = await resolveMarket({ marketId, outcome });
+  const text = buildMarketText(market);
+  const voided = (market as typeof market & { _voided?: boolean })._voided === true;
+
+  // Update broadcast messages to show resolved state (no buttons)
+  if (market.broadcast_message_ids) {
+    const ids = JSON.parse(market.broadcast_message_ids) as { chat_id: number; message_id: number }[];
+    for (const { chat_id, message_id } of ids) {
+      await ctx.api.editMessageText(chat_id, message_id, text, { parse_mode: "Markdown" }).catch(() => null);
+    }
+  }
+
+  if (voided) {
+    // Notify everyone their stake was refunded
+    for (const { telegram_id, payout } of payouts) {
+      await ctx.api.sendMessage(
+        telegram_id,
+        `↩️ *Market voided.* No opposing bets were placed, so your $${payout.toFixed(2)} USDC stake has been refunded.`,
+        { parse_mode: "Markdown" }
+      ).catch(() => null);
+    }
+    await ctx.reply(`↩️ Market voided — no opposing pool. ${payouts.length} player(s) refunded.`);
+    return;
+  }
+
+  // Notify winners
+  for (const { telegram_id, payout } of payouts) {
+    await ctx.api.sendMessage(
+      telegram_id,
+      `🏆 *You won!* The market resolved *${outcome}*.\nYou received *$${payout.toFixed(2)} USDC* in your wallet.`,
+      { parse_mode: "Markdown" }
+    ).catch(() => null);
+  }
+
+  await ctx.reply(`✅ Market resolved as *${outcome}*. ${payouts.length} winner(s) paid out.`, { parse_mode: "Markdown" });
+}
+
+// Callback: pm:yes:<id> or pm:no:<id>
+export async function handleMarketBet(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  await ctx.answerCallbackQuery();
+
+  const data = ctx.callbackQuery?.data ?? "";
+  const [, side, marketId] = data.split(":");
+  if (!marketId || (side !== "yes" && side !== "no")) return;
+
+  const betSide = side.toUpperCase() as "YES" | "NO";
+  const DEFAULT_BET = 1; // $1 USDC per tap
+
+  const market = await getMarket(marketId);
+  if (!market) {
+    await ctx.answerCallbackQuery({ text: "Market not found.", show_alert: true });
+    return;
+  }
+  if (market.status !== "open" || new Date(market.closes_at) < new Date()) {
+    await ctx.answerCallbackQuery({ text: "This market is no longer accepting bets.", show_alert: true });
+    return;
+  }
+
+  const existing = await getUserBet(marketId, ctx.from.id);
+  if (existing) {
+    await ctx.answerCallbackQuery({ text: `You already bet ${existing.side} on this market.`, show_alert: true });
+    return;
+  }
+
+  try {
+    const { market: updated } = await placeBet({
+      marketId,
+      telegramId: ctx.from.id,
+      side: betSide,
+      amount: DEFAULT_BET,
+    });
+
+    const odds = calcOdds(updated.yes_pool, updated.no_pool);
+    await ctx.answerCallbackQuery({
+      text: `✅ Bet placed: ${betSide} @ ${formatOdds(betSide === "YES" ? odds.yes : odds.no)}`,
+      show_alert: true,
+    });
+
+    // Refresh the user's own message with updated odds
+    const newText = buildMarketText(updated);
+    const keyboard = new InlineKeyboard()
+      .text("✅ YES", `pm:yes:${marketId}`)
+      .text("❌ NO", `pm:no:${marketId}`);
+    await ctx.editMessageText(newText, { parse_mode: "Markdown", reply_markup: keyboard }).catch(() => null);
+  } catch (err) {
+    await ctx.answerCallbackQuery({
+      text: err instanceof Error ? err.message : "Failed to place bet.",
+      show_alert: true,
+    });
   }
 }
