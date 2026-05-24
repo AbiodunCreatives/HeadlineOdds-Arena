@@ -3560,14 +3560,14 @@ export async function handleMarketBet(ctx: Context): Promise<void> {
     .text("₦500", `pma:500:${marketId}:${side}`).text("₦1,000", `pma:1000:${marketId}:${side}`).row()
     .text("₦5,000", `pma:5000:${marketId}:${side}`).text("Custom ✏️", `pma:custom:${marketId}:${side}`);
 
+  const pricePerShare = Math.round(prob * 100);
+  const payoutPerShare = 100;
+
   await ctx.reply(
-    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ${formatOdds(prob)}\n\n` +
+    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ₦${pricePerShare}/share\n\n` +
     `*${market.question}*\n\n` +
-    `How much do you want to bet?\n` +
-    `_Potential win at current odds:_\n` +
-    `₦500 → *₦${Math.round(500 / prob).toLocaleString()}*\n` +
-    `₦1,000 → *₦${Math.round(1000 / prob).toLocaleString()}*\n` +
-    `₦5,000 → *₦${Math.round(5000 / prob).toLocaleString()}*`,
+    `Each share costs ₦${pricePerShare}. Win ₦${payoutPerShare} per share if correct.\n\n` +
+    `How much do you want to bet?`,
     { parse_mode: "Markdown", reply_markup: keyboard }
   );
 }
