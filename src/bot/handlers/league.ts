@@ -3561,7 +3561,13 @@ export async function handleMarketBet(ctx: Context): Promise<void> {
     .text("₦5,000", `pma:5000:${marketId}:${side}`).text("Custom ✏️", `pma:custom:${marketId}:${side}`);
 
   await ctx.reply(
-    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ${formatOdds(prob)}\n\n*${market.question}*\n\nHow much do you want to bet?`,
+    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ${formatOdds(prob)}\n\n` +
+    `*${market.question}*\n\n` +
+    `How much do you want to bet?\n` +
+    `_Potential win at current odds:_\n` +
+    `₦500 → *₦${Math.round(500 / prob).toLocaleString()}*\n` +
+    `₦1,000 → *₦${Math.round(1000 / prob).toLocaleString()}*\n` +
+    `₦5,000 → *₦${Math.round(5000 / prob).toLocaleString()}*`,
     { parse_mode: "Markdown", reply_markup: keyboard }
   );
 }
