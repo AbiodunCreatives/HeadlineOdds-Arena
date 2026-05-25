@@ -68,16 +68,16 @@ export const AGENT_STYLES = ["aggressive", "conservative", "random", "trend", "c
 export type AgentStyle = typeof AGENT_STYLES[number];
 
 export const AGENT_DISPLAY_NAMES: Record<AgentStyle, string> = {
-  aggressive:    "Phiona 🔥",
-  conservative:  "Danfo_Dave 🛡",
-  random:        "Fave 🎲",
-  trend:         "Mallam_Odds 📈",
-  contrarian:    "Alhaji_Pump ↩️",
-  scalper:       "Razor 🔪",
-  momentum_only: "Bullet 🚀",
-  mean_revert:   "Bouncer 🏀",
-  odds_follower: "Bookman 📖",
-  balanced:      "Zen 🧘",
+  aggressive:    "BigEmeka",
+  conservative:  "TundeG",
+  random:        "SolaG",
+  trend:         "ChidiB",
+  contrarian:    "BelloB",
+  scalper:       "KemiCash",
+  momentum_only: "DayoG",
+  mean_revert:   "UcheB",
+  odds_follower: "NgoziP",
+  balanced:      "AmaraB",
 };
 
 // ── Interfaces ────────────────────────────────────────────────────────────────

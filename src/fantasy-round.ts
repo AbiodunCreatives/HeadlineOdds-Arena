@@ -482,15 +482,7 @@ export async function processFantasyLeagueRound(round: Round, pricing: RoundPric
         console.warn(`[arena-bots] Auto-trade failed for arena ${game.code}:`, e);
       });
     }
-    // Player-owned agents auto-trade in paid arenas
-    if (!game.is_free_trial) {
-      const prevRef = game.last_round_event_id
-        ? await loadFantasyTradeReference(game.last_round_event_id).catch(() => null)
-        : null;
-      runAgentTradesForRound(game, pricing, prevRef?.upPrice ?? null).catch((e) => {
-        console.warn(`[arena-bots] Agent auto-trade failed for arena ${game.code}:`, e);
-      });
-    }
+    // Player-owned agents only trade in free trial arenas — paid arenas are player vs player only
   }
 }
 
