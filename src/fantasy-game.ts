@@ -63,6 +63,7 @@ import {
 } from "./fantasy-league.ts";
 import { randomBytes } from "crypto";
 import { seedBotsIntoFreeTrialGame } from "./arena-bots.ts";
+import { getCurrentRoundSnapshot } from "./bayse-market.ts";
 
 export const AGENT_STYLES = ["aggressive", "conservative", "random", "trend", "contrarian", "scalper", "momentum_only", "mean_revert", "odds_follower", "balanced"] as const;
 export type AgentStyle = typeof AGENT_STYLES[number];
@@ -200,12 +201,30 @@ export async function createFreeTrialArena(creatorTelegramId: number): Promise<F
   }
   const existing = await getActiveArenaForUser(creatorTelegramId);
   if (existing) throw new Error(`You're already in arena ${existing.code}. Finish it before creating a new one.`);
-  const lobbyWaitMs = 10 * 60 * 1000;
-  const startAt = new Date(Date.now() + lobbyWaitMs).toISOString();
+
+  // Align startAt to the next clean 15-min round boundary.
+  // If the current round is >33% elapsed (>5 min in), skip it and start at the next one.
+  const ROUND_MS = 15 * 60 * 1000;
+  const snapshot = await getCurrentRoundSnapshot("BTC").catch(() => null);
+  let startAt: string;
+  if (snapshot) {
+    const closingMs = Date.parse(snapshot.round.closingDate);
+    if (snapshot.round.pctElapsed > 0.33) {
+      // Skip current round — start at the round after next closing
+      startAt = new Date(closingMs + ROUND_MS).toISOString();
+    } else {
+      // Current round is fresh enough — start at its opening
+      startAt = snapshot.round.openingDate;
+    }
+  } else {
+    // Fallback: next 15-min boundary from now
+    const now = Date.now();
+    startAt = new Date(Math.ceil(now / ROUND_MS) * ROUND_MS).toISOString();
+  }
+
   const endAt = new Date(Date.parse(startAt) + getFantasyDurationMs(FREE_TRIAL_DURATION_HOURS)).toISOString();
   const code = await generateUniqueFantasyGameCode();
   const game = await createFreeTrialGame({ code, creatorTelegramId, virtualStartBalance: FREE_TRIAL_VIRTUAL_BALANCE, startAt, endAt });
-  // Seed 5 AI bots as members (fire-and-forget, non-fatal)
   seedBotsIntoFreeTrialGame(game).catch((e) => {
     console.warn(`[arena-bots] Failed to seed bots into free trial arena ${game.code}:`, e);
   });
