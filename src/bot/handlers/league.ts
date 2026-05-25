@@ -5,7 +5,18 @@ import { PublicKey } from "@solana/web3.js";
 import { getCurrentRoundSnapshot } from "../../bayse-market.ts";
 import { getBtcChartMenuUrl } from "../../btc-chart-menu.ts";
 import { config } from "../../config.ts";
-import { getBalance } from "../../db/balances.ts";
+import { getBalance, debitBalance } from "../../db/balances.ts";
+import {
+  listBayseEvents,
+  placeBayseOrder,
+  sharesForAmount,
+  potentialPayoutNgn,
+  ngnToUsdc,
+  type BayseEvent,
+} from "../../bayse-trading.ts";
+import { insertBaysePosition } from "../../bayse-settlement.ts";
+import { supabase } from "../../db/client.ts";
+import { redis } from "../../utils/rateLimit.ts";
 import {
   buildMarketText,
   calcOdds,
@@ -3636,4 +3647,409 @@ async function placePredictionBet(ctx: Context, marketId: string, side: "YES" | 
   } catch (err) {
     await ctx.reply(`❌ ${err instanceof Error ? err.message : "Failed to place bet."}`);
   }
+}
+
+// ── Bayse Markets (/markets) ──────────────────────────────────────────────────
+
+const BAYSE_MARKETS_CACHE_KEY = "bayse:markets:cache";
+const BAYSE_MARKETS_CACHE_TTL = 300; // 5 minutes
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  politics: "🇳🇬",
+  sports: "⚽",
+  entertainment: "🎬",
+  crypto: "₿",
+  business: "💼",
+};
+
+function categoryEmoji(category: string): string {
+  return CATEGORY_EMOJI[category.toLowerCase()] ?? "📊";
+}
+
+function formatNgnPrice(price: number): string {
+  return `₦${Math.round(price * 100)}`;
+}
+
+async function getCachedBayseEvents(): Promise<BayseEvent[]> {
+  try {
+    const cached = await redis.get(BAYSE_MARKETS_CACHE_KEY);
+    if (cached) return JSON.parse(cached) as BayseEvent[];
+  } catch { /* ignore */ }
+
+  const events = await listBayseEvents({ size: 30 });
+
+  try {
+    await redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL);
+  } catch { /* ignore */ }
+
+  return events;
+}
+
+function buildMarketsListText(events: BayseEvent[], category?: string): string {
+  const filtered = category
+    ? events.filter((e) => e.category.toLowerCase() === category.toLowerCase())
+    : events;
+
+  if (filtered.length === 0) {
+    return "No live markets right now. Check back soon.";
+  }
+
+  const byCategory = new Map<string, BayseEvent[]>();
+  for (const e of filtered) {
+    const cat = e.category;
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(e);
+  }
+
+  const lines: string[] = ["📊 *Live Markets*", ""];
+
+  for (const [cat, catEvents] of byCategory) {
+    lines.push(`${categoryEmoji(cat)} *${cat}*`);
+    for (const event of catEvents.slice(0, 5)) {
+      const m = event.markets[0];
+      if (!m) continue;
+      const trades = event.totalOrders >= 1000
+        ? `${(event.totalOrders / 1000).toFixed(1)}K`
+        : String(event.totalOrders);
+      lines.push(
+        `• ${event.title}`,
+        `  YES ${formatNgnPrice(m.outcome1Price)}  |  NO ${formatNgnPrice(m.outcome2Price)}  |  ${trades} trades`
+      );
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
+function buildMarketsListKeyboard(events: BayseEvent[], currentCategory?: string): InlineKeyboard {
+  const categories = [...new Set(events.map((e) => e.category))];
+  const kb = new InlineKeyboard();
+
+  for (const cat of categories.slice(0, 4)) {
+    const active = cat.toLowerCase() === currentCategory?.toLowerCase();
+    kb.text(`${active ? "✓ " : ""}${categoryEmoji(cat)} ${cat}`, `bm:cat:${cat}`);
+  }
+
+  kb.row().text("🔄 Refresh", "bm:refresh");
+  return kb;
+}
+
+function buildMarketDetailText(event: BayseEvent): string {
+  const m = event.markets[0];
+  if (!m) return "Market data unavailable.";
+
+  const closes = new Date(event.closingDate).toLocaleString("en-NG", {
+    timeZone: "Africa/Lagos",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  const liquidityNgn = Math.round(event.liquidity);
+  const liquidityFmt = liquidityNgn >= 1_000_000
+    ? `₦${(liquidityNgn / 1_000_000).toFixed(1)}M`
+    : liquidityNgn >= 1_000
+    ? `₦${Math.round(liquidityNgn / 1_000)}K`
+    : `₦${liquidityNgn}`;
+
+  return [
+    `🎯 *${event.title}*`,
+    "",
+    `Buy Yes — *${formatNgnPrice(m.outcome1Price)}*/share`,
+    `Buy No  — *${formatNgnPrice(m.outcome2Price)}*/share`,
+    "",
+    `💰 ${liquidityFmt} pool   ⏳ Ends ${closes}`,
+  ].join("\n");
+}
+
+function buildMarketDetailKeyboard(eventId: string, marketId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ YES", `bm:bet:yes:${eventId}:${marketId}`)
+    .text("❌ NO", `bm:bet:no:${eventId}:${marketId}`)
+    .row()
+    .text("← Back to markets", "bm:list");
+}
+
+function buildBetAmountKeyboard(eventId: string, marketId: string, side: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("₦500", `bm:amt:500:${eventId}:${marketId}:${side}`)
+    .text("₦1,000", `bm:amt:1000:${eventId}:${marketId}:${side}`)
+    .row()
+    .text("₦5,000", `bm:amt:5000:${eventId}:${marketId}:${side}`)
+    .text("✏️ Custom", `bm:amt:custom:${eventId}:${marketId}:${side}`)
+    .row()
+    .text("← Back", `bm:event:${eventId}`);
+}
+
+const BAYSE_BET_STATE_TTL = 10 * 60;
+
+async function saveBayseBetState(telegramId: number, state: {
+  eventId: string; marketId: string; side: string;
+}): Promise<void> {
+  await redis.set(`bayse:bet:${telegramId}`, JSON.stringify(state), "EX", BAYSE_BET_STATE_TTL);
+}
+
+async function loadBayseBetState(telegramId: number): Promise<{ eventId: string; marketId: string; side: string } | null> {
+  const raw = await redis.get(`bayse:bet:${telegramId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function clearBayseBetState(telegramId: number): Promise<void> {
+  await redis.del(`bayse:bet:${telegramId}`);
+}
+
+async function saveBayseCustomBetPending(telegramId: number): Promise<void> {
+  await redis.set(`bayse:bet:custom:${telegramId}`, "1", "EX", BAYSE_BET_STATE_TTL);
+}
+
+async function hasBayseCustomBetPending(telegramId: number): Promise<boolean> {
+  return (await redis.get(`bayse:bet:custom:${telegramId}`)) !== null;
+}
+
+async function clearBayseCustomBetPending(telegramId: number): Promise<void> {
+  await redis.del(`bayse:bet:custom:${telegramId}`);
+}
+
+async function placeBayseMarketBet(
+  ctx: Context,
+  eventId: string,
+  marketId: string,
+  side: "yes" | "no",
+  ngnAmount: number
+): Promise<void> {
+  if (!ctx.from) return;
+
+  const events = await getCachedBayseEvents();
+  const event = events.find((e) => e.id === eventId);
+  const market = event?.markets.find((m) => m.id === marketId);
+
+  if (!event || !market) {
+    await ctx.reply("Market not found or no longer available.");
+    return;
+  }
+
+  const outcomeId = side === "yes" ? market.outcome1Id : market.outcome2Id;
+  const outcomeLabel = side === "yes" ? market.outcome1Label : market.outcome2Label;
+  const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
+  const shares = sharesForAmount(ngnAmount, price);
+  const usdcAmount = ngnToUsdc(ngnAmount);
+
+  if (shares < 1) {
+    await ctx.reply(`Minimum bet is ₦${Math.ceil(price * 100)} (1 share). Please enter a higher amount.`);
+    return;
+  }
+
+  const balance = await getBalance(ctx.from.id);
+  if (balance < usdcAmount) {
+    await ctx.reply(
+      `💸 Insufficient balance.\n\nRequired: $${usdcAmount.toFixed(4)} USDC\nYour balance: $${balance.toFixed(4)} USDC`,
+      { reply_markup: buildInsufficientBalanceKeyboard() }
+    );
+    return;
+  }
+
+  const debited = await debitBalance(ctx.from.id, usdcAmount, {
+    reason: "bayse_market_bet",
+    referenceType: "bayse_position",
+    idempotencyKey: `baysebet:${ctx.from.id}:${marketId}:${Date.now()}`,
+  });
+
+  if (!debited) {
+    await ctx.reply("Insufficient balance. Please top up your wallet.", {
+      reply_markup: buildInsufficientBalanceKeyboard(),
+    });
+    return;
+  }
+
+  // Place aggregated order on Bayse
+  let bayseOrderId: string | null = null;
+  try {
+    const order = await placeBayseOrder({ eventId, marketId, outcomeId, amountNgn: ngnAmount });
+    bayseOrderId = order.order.id;
+  } catch (err) {
+    console.error("[bayse] Order placement failed:", err);
+    // Position still recorded — settlement monitor will handle it
+  }
+
+  const position = await insertBaysePosition({
+    telegramId: ctx.from.id,
+    eventId,
+    eventSlug: event.slug,
+    eventTitle: event.title,
+    marketId,
+    outcomeId,
+    outcomeLabel,
+    amountNgn: ngnAmount,
+    amountUsdc: usdcAmount,
+    shares,
+    priceAtBet: price,
+  });
+
+  if (bayseOrderId) {
+    await supabase
+      .from("bayse_positions")
+      .update({ bayse_order_id: bayseOrderId })
+      .eq("id", position.id);
+  }
+
+  const payoutNgn = potentialPayoutNgn(shares);
+  await ctx.reply(
+    `✅ *Bet placed!*\n\n` +
+    `*${side.toUpperCase()}* on "${event.title}"\n` +
+    `₦${ngnAmount.toLocaleString()} → ${shares} shares @ ${formatNgnPrice(price)}\n` +
+    `Win ₦${payoutNgn.toLocaleString()} if correct.`,
+    { parse_mode: "Markdown" }
+  );
+}
+
+export async function handleMarkets(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+
+  try {
+    const events = await getCachedBayseEvents();
+    await ctx.reply(buildMarketsListText(events), {
+      parse_mode: "Markdown",
+      reply_markup: buildMarketsListKeyboard(events),
+    });
+  } catch (err) {
+    await ctx.reply("Couldn't load markets right now. Please try again in a moment.");
+    console.error("[bayse] handleMarkets failed:", err);
+  }
+}
+
+export async function handleMarketsCallback(ctx: Context): Promise<void> {
+  if (!ctx.from || !ctx.callbackQuery?.data) return;
+
+  const data = ctx.callbackQuery.data;
+
+  if (data === "bm:list" || data === "bm:refresh") {
+    try {
+      if (data === "bm:refresh") {
+        await redis.del(BAYSE_MARKETS_CACHE_KEY);
+      }
+      const events = await getCachedBayseEvents();
+      await editTradePromptMessage(
+        ctx,
+        buildMarketsListText(events),
+        buildMarketsListKeyboard(events),
+        "Markdown"
+      );
+    } catch {
+      await ctx.reply("Couldn't load markets right now.");
+    }
+    return;
+  }
+
+  if (data.startsWith("bm:cat:")) {
+    const category = data.slice("bm:cat:".length);
+    try {
+      const events = await getCachedBayseEvents();
+      await editTradePromptMessage(
+        ctx,
+        buildMarketsListText(events, category),
+        buildMarketsListKeyboard(events, category),
+        "Markdown"
+      );
+    } catch {
+      await ctx.reply("Couldn't load markets right now.");
+    }
+    return;
+  }
+
+  if (data.startsWith("bm:event:")) {
+    const eventId = data.slice("bm:event:".length);
+    try {
+      const events = await getCachedBayseEvents();
+      const event = events.find((e) => e.id === eventId);
+      if (!event || !event.markets[0]) {
+        await ctx.reply("Market not found.");
+        return;
+      }
+      await editTradePromptMessage(
+        ctx,
+        buildMarketDetailText(event),
+        buildMarketDetailKeyboard(event.id, event.markets[0].id),
+        "Markdown"
+      );
+    } catch {
+      await ctx.reply("Couldn't load market details.");
+    }
+    return;
+  }
+
+  if (data.startsWith("bm:bet:")) {
+    // bm:bet:<side>:<eventId>:<marketId>
+    const parts = data.split(":");
+    const side = parts[2] as "yes" | "no";
+    const eventId = parts[3] ?? "";
+    const marketId = parts[4] ?? "";
+
+    if (!eventId || !marketId || (side !== "yes" && side !== "no")) return;
+
+    await saveBayseBetState(ctx.from.id, { eventId, marketId, side });
+
+    const events = await getCachedBayseEvents().catch(() => []);
+    const event = events.find((e) => e.id === eventId);
+    const market = event?.markets.find((m) => m.id === marketId);
+    const price = market ? (side === "yes" ? market.outcome1Price : market.outcome2Price) : 0;
+
+    await editTradePromptMessage(
+      ctx,
+      `${side === "yes" ? "✅" : "❌"} *Bet ${side.toUpperCase()}* — ${formatNgnPrice(price)}/share\n\n` +
+      `*${event?.title ?? ""}*\n\n` +
+      `Each share costs ${formatNgnPrice(price)}. Win ₦100 per share if correct.\n\n` +
+      `How much do you want to bet?`,
+      buildBetAmountKeyboard(eventId, marketId, side),
+      "Markdown"
+    );
+    return;
+  }
+
+  if (data.startsWith("bm:amt:")) {
+    // bm:amt:<amount|custom>:<eventId>:<marketId>:<side>
+    const parts = data.split(":");
+    const amountStr = parts[2];
+    const eventId = parts[3] ?? "";
+    const marketId = parts[4] ?? "";
+    const side = parts[5] as "yes" | "no";
+
+    if (amountStr === "custom") {
+      await saveBayseCustomBetPending(ctx.from.id);
+      await ctx.reply("Enter your bet amount in naira (e.g. 2500):");
+      return;
+    }
+
+    const ngnAmount = Number.parseInt(amountStr, 10);
+    if (!Number.isFinite(ngnAmount) || ngnAmount <= 0) return;
+
+    await clearBayseBetState(ctx.from.id);
+    await placeBayseMarketBet(ctx, eventId, marketId, side, ngnAmount);
+    return;
+  }
+}
+
+export async function handleBayseCustomBetInput(ctx: Context): Promise<boolean> {
+  if (!ctx.from) return false;
+  if (!(await hasBayseCustomBetPending(ctx.from.id))) return false;
+
+  const text = (ctx.message?.text ?? "").replace(/[^0-9]/g, "");
+  const ngnAmount = Number.parseInt(text, 10);
+
+  if (!Number.isFinite(ngnAmount) || ngnAmount < 100) {
+    await ctx.reply("Minimum bet is ₦100. Enter a valid amount:");
+    return true;
+  }
+
+  await clearBayseCustomBetPending(ctx.from.id);
+
+  const state = await loadBayseBetState(ctx.from.id);
+  if (!state) {
+    await ctx.reply("Session expired. Please tap YES or NO again.");
+    return true;
+  }
+
+  await clearBayseBetState(ctx.from.id);
+  await placeBayseMarketBet(ctx, state.eventId, state.marketId, state.side as "yes" | "no", ngnAmount);
+  return true;
 }

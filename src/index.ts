@@ -31,6 +31,9 @@ import {
   handleMarketBet,
   handleMarketBetAmount,
   handleMarketBetCustom,
+  handleMarkets,
+  handleMarketsCallback,
+  handleBayseCustomBetInput,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -43,6 +46,10 @@ import {
   startFantasySettlementMonitor,
   stopFantasySettlementMonitor,
 } from "./fantasy-settlement.ts";
+import {
+  startBayseSettlementMonitor,
+  stopBayseSettlementMonitor,
+} from "./bayse-settlement.ts";
 import {
   startSolanaWalletMonitor,
   stopSolanaWalletMonitor,
@@ -132,8 +139,10 @@ bot.command("withdraw", wrap(handleWithdraw));
 bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
+bot.command("markets", wrap(handleMarkets));
 bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
 bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
+bot.callbackQuery(/^bm:/, wrap(handleMarketsCallback));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
@@ -144,6 +153,9 @@ bot.on("message:text", async (ctx, next) => {
 
   // Prediction market custom bet amount
   if (await handleMarketBetCustom(ctx)) return;
+
+  // Bayse market custom bet amount
+  if (await handleBayseCustomBetInput(ctx)) return;
 
   // Plain-text messages that aren't commands or handled inputs go to support agent
   const text = ctx.message?.text ?? "";
@@ -445,6 +457,7 @@ async function shutdown(signal: string): Promise<void> {
 
   stopFantasyMonitor();
   stopFantasySettlementMonitor();
+  stopBayseSettlementMonitor();
   stopSolanaWalletMonitor();
 
   await new Promise<void>((resolve) => {
@@ -543,6 +556,10 @@ async function main(): Promise<void> {
       command: "withdraw",
       description: "Withdraw USDC to a Solana wallet",
     },
+    {
+      command: "markets",
+      description: "Browse live prediction markets",
+    },
   ]);
 
   const tradeMenuUrl = config.ARENA_URL ? `${config.ARENA_URL}/trade` : null;
@@ -568,6 +585,7 @@ async function main(): Promise<void> {
   startFantasyMonitor();
   startFantasySettlementMonitor();
   startSolanaWalletMonitor();
+  startBayseSettlementMonitor();
 
   if (config.WEBHOOK_URL) {
     const webhookUrl = `${config.WEBHOOK_URL}/webhook/${config.WEBHOOK_PATH_SECRET}`;
