@@ -279,13 +279,13 @@ function buildStartWelcomeText(): string {
 
 function buildStartWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💵 Fund Naira", WALLET_NAIRA_HELP)
-    .text("💳 Deposit USDC", START_WALLET)
-    .text("🏟 Browse Arenas", START_LOBBY)
+    .text("🔴 Live Arenas", START_LOBBY)
+    .text("⚡ Create Arena", ARENA_CREATE)
+    .text("🎮 Free Trial", ARENA_FREE_TRIAL)
     .row()
-    .text("❓ How it works", START_HOW_IT_WORKS)
-    .text("📊 Chart", "chart")
-    .text("🎮 Free Trial", ARENA_FREE_TRIAL);
+    .text("💳 Wallet", START_WALLET)
+    .text("❓ FAQ", START_HOW_IT_WORKS)
+    .text("📊 Markets", "bm:list");
 }
 
 function buildFreeTrialWelcomeText(firstName: string): string {
@@ -305,13 +305,13 @@ function buildFreeTrialWelcomeText(firstName: string): string {
 
 function buildFreeTrialWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🎮 Try Free Arena", ARENA_FREE_TRIAL)
-    .text("❓ How it works", START_HOW_IT_WORKS)
-    .text("📊 Chart", "chart")
+    .text("🔴 Live Arenas", START_LOBBY)
+    .text("⚡ Create Arena", ARENA_CREATE)
+    .text("🎮 Free Trial", ARENA_FREE_TRIAL)
     .row()
-    .text("💵 Fund & Play", WALLET_NAIRA_HELP)
     .text("💳 Wallet", START_WALLET)
-    .text("🏟 Browse Arenas", START_LOBBY);
+    .text("❓ FAQ", START_HOW_IT_WORKS)
+    .text("📊 Markets", "bm:list");
 }
 
 function buildFreeTrialCreatedText(code: string): string {
@@ -380,26 +380,15 @@ function buildStartOnboardingText(input: {
   ].join("\n");
 }
 
-function buildStartOnboardingKeyboard(showFreeTrial = false): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  if (showFreeTrial) {
-    return kb
-      .text("🎮 Try Free Arena", ARENA_FREE_TRIAL)
-      .text("🏟 Browse Arenas", START_LOBBY)
-      .text("⚡ Create Arena", ARENA_CREATE)
-      .row()
-      .text("💳 Wallet", START_WALLET)
-      .text("❓ How it works", START_HOW_IT_WORKS)
-      .text("📊 Chart", "chart");
-  }
-  return kb
-    .text("🏟 Browse Arenas", START_LOBBY)
+function buildStartOnboardingKeyboard(_showFreeTrial = false): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🔴 Live Arenas", START_LOBBY)
     .text("⚡ Create Arena", ARENA_CREATE)
-    .text("💳 Wallet", START_WALLET)
+    .text("🎮 Free Trial", ARENA_FREE_TRIAL)
     .row()
-    .text("❓ How it works", START_HOW_IT_WORKS)
-    .text("📊 Chart", "chart")
-    .text("🎮 Free Trial", ARENA_FREE_TRIAL);
+    .text("💳 Wallet", START_WALLET)
+    .text("❓ FAQ", START_HOW_IT_WORKS)
+    .text("📊 Markets", "bm:list");
 }
 
 function buildCreateArenaPickerText(balance: number): string {
