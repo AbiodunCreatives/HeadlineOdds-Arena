@@ -3955,8 +3955,9 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
         buildCategoryMarketsKeyboard(category, top3),
         "Markdown"
       );
-    } catch {
-      await ctx.reply("Couldn't load markets right now. Try again.");
+    } catch (err) {
+      console.error("[bayse] category load failed:", err);
+      await ctx.reply(`Couldn't load markets right now. Try again.`);
     }
     return;
   }

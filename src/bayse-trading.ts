@@ -26,9 +26,13 @@ function sign(method: string, path: string, body: string | null): Record<string,
 
 async function request<T>(method: string, path: string, body?: object): Promise<T> {
   const bodyStr = body ? JSON.stringify(body) : null;
-  const headers = method === "GET"
-    ? { "X-Public-Key": config.BAYSE_PUBLIC_KEY ?? "", "Content-Type": "application/json" }
-    : sign(method, path, bodyStr);
+  const pub = config.BAYSE_PUBLIC_KEY;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (method === "GET") {
+    if (pub) headers["X-Public-Key"] = pub;
+  } else {
+    Object.assign(headers, sign(method, path, bodyStr));
+  }
 
   const res = await fetch(`${BASE}${path}`, {
     method,
