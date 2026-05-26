@@ -31,6 +31,7 @@ interface MarketRound {
   downPrice: number | null;
   marketId: string | null;
   marketUrl: string | null;
+  pricePoint: number | null;
 }
 
 interface MarketState {
@@ -86,7 +87,6 @@ interface MiniAppState {
 
 type TradeDirection = 'UP' | 'DOWN';
 
-const API_BASE = process.env.NEXT_PUBLIC_BOT_API_URL ?? '';
 const BOT_URL = 'https://t.me/HOArena_bot';
 const TRADE_AMOUNTS = [10, 25, 50, 100];
 
@@ -152,12 +152,15 @@ async function readErrorMessage(response: Response) {
   }
 }
 
-function RoundChanceChart(props: {
+function PriceHistoryChart(props: {
   rounds: MarketRound[];
   selectedRoundId: string | null;
   currentRoundId: string | null;
+  targetPrice: number | null;
 }) {
-  const pricedRounds = props.rounds.filter((round) => round.upPrice !== null);
+  const pricedRounds = [...props.rounds]
+    .filter((round) => round.pricePoint !== null)
+    .sort((left, right) => Date.parse(left.closingDate) - Date.parse(right.closingDate));
 
   if (pricedRounds.length < 2) {
     return (
@@ -171,11 +174,20 @@ function RoundChanceChart(props: {
   const height = 46;
   const paddingX = 4;
   const paddingY = 5;
+  const values = pricedRounds.map((round) => round.pricePoint ?? 0);
+  const minPrice = Math.min(...values);
+  const maxPrice = Math.max(...values);
+  const displayMin = minPrice - 25;
+  const displayMax = maxPrice + 25;
 
   const points = pricedRounds.map((round, index) => {
     const span = Math.max(1, pricedRounds.length - 1);
     const x = paddingX + ((width - paddingX * 2) * index) / span;
-    const y = height - paddingY - (round.upPrice ?? 0.5) * (height - paddingY * 2);
+    const normalized =
+      displayMax === displayMin
+        ? 0.5
+        : ((round.pricePoint ?? displayMin) - displayMin) / (displayMax - displayMin);
+    const y = height - paddingY - normalized * (height - paddingY * 2);
     return { round, x, y };
   });
 
@@ -188,7 +200,11 @@ function RoundChanceChart(props: {
     points[points.length - 1]!;
   const currentPoint =
     points.find((point) => point.round.eventId === props.currentRoundId) ?? null;
-  const baselineY = height - paddingY - 0.5 * (height - paddingY * 2);
+  const baselineNormalized =
+    props.targetPrice === null || displayMax === displayMin
+      ? 0.5
+      : (props.targetPrice - displayMin) / (displayMax - displayMin);
+  const baselineY = height - paddingY - Math.min(Math.max(baselineNormalized, 0), 1) * (height - paddingY * 2);
 
   return (
     <div className="trade-chart-card" aria-hidden="true">
@@ -271,16 +287,11 @@ export default function TradeMiniApp() {
   }, [selectedRoundId]);
 
   async function fetchState() {
-    if (!API_BASE) {
-      setError('Mini app config missing. Set NEXT_PUBLIC_BOT_API_URL before deploy.');
-      return;
-    }
-
     if (typeof window === 'undefined') return;
 
     const tgId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
     const code = new URLSearchParams(window.location.search).get('code')?.trim().toUpperCase();
-    const url = new URL(`${API_BASE}/api/miniapp-state`);
+    const url = new URL('/api/miniapp-state', window.location.origin);
 
     if (tgId) {
       url.searchParams.set('tgId', String(tgId));
@@ -375,7 +386,10 @@ export default function TradeMiniApp() {
     data?.market.pricing?.eventThreshold ??
     data?.market.round?.eventThreshold ??
     null;
-  const currentPrice = selectedIsCurrent ? data?.market.currentPrice ?? null : null;
+  const currentPrice =
+    selectedIsCurrent
+      ? data?.market.currentPrice ?? null
+      : selectedRound?.pricePoint ?? null;
   const countdownTarget =
     selectedRound?.status === 'upcoming'
       ? selectedRound.openingDate
@@ -543,10 +557,11 @@ export default function TradeMiniApp() {
                 </div>
               </div>
 
-              <RoundChanceChart
+              <PriceHistoryChart
                 rounds={data.market.rounds}
                 selectedRoundId={selectedRound.eventId}
                 currentRoundId={data.market.currentRoundId}
+                targetPrice={targetPrice}
               />
             </div>
 
