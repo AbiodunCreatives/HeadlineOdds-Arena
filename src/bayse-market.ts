@@ -77,6 +77,19 @@ export interface CurrentRoundSnapshot {
   pricing: RoundPricing | null;
 }
 
+export interface MarketTimelineRound extends Round {
+  status: "closed" | "live" | "upcoming";
+  upPrice: number | null;
+  downPrice: number | null;
+  marketId: string | null;
+  marketUrl: string | null;
+}
+
+export interface MarketTimelineSnapshot {
+  currentRoundId: string | null;
+  rounds: MarketTimelineRound[];
+}
+
 export interface RoundPricing {
   upPrice: number;
   downPrice: number;
@@ -114,7 +127,7 @@ function normalizeRoundPricing(
     eventThreshold: event.eventThreshold ?? market.marketThreshold ?? null,
     eventId: event.id,
     marketId: market.id,
-    url: `https://bayse.markets/event/${event.id}`,
+    url: `https://app.bayse.markets/market/${market.id}`,
   };
 }
 
@@ -152,6 +165,21 @@ function normalizeRound(event: BayseEventRaw, now: number): Round {
     eventThreshold: event.eventThreshold ?? null,
     pctElapsed,
   };
+}
+
+function getRoundStatus(round: Round, now: number): MarketTimelineRound["status"] {
+  const openingTime = Date.parse(round.openingDate);
+  const closingTime = Date.parse(round.closingDate);
+
+  if (Number.isFinite(closingTime) && closingTime <= now) {
+    return "closed";
+  }
+
+  if (!Number.isFinite(openingTime) || openingTime <= now) {
+    return "live";
+  }
+
+  return "upcoming";
 }
 
 function getEmbeddedRoundPricing(event: BayseEventRaw): RoundPricing | null {
@@ -331,6 +359,52 @@ export async function getCurrentRoundSnapshot(
   return {
     round: normalizeRound(current, now),
     pricing: getEmbeddedRoundPricing(current) ?? (await getEventPricing(current.id)),
+  };
+}
+
+export async function getMarketTimelineSnapshot(
+  asset: BayseAsset = "BTC",
+  limit = 7
+): Promise<MarketTimelineSnapshot> {
+  const now = Date.now();
+  const events = await listSeriesEvents(asset, { size: Math.max(limit + 6, 12) });
+
+  if (events.length === 0) {
+    return {
+      currentRoundId: null,
+      rounds: [],
+    };
+  }
+
+  const rounds = events.map((event) => {
+    const round = normalizeRound(event, now);
+    const pricing = getEmbeddedRoundPricing(event);
+
+    return {
+      ...round,
+      status: getRoundStatus(round, now),
+      upPrice: pricing?.upPrice ?? null,
+      downPrice: pricing?.downPrice ?? null,
+      marketId: pricing?.marketId ?? null,
+      marketUrl: pricing?.url ?? null,
+    } satisfies MarketTimelineRound;
+  });
+
+  const currentIndex = rounds.findIndex((round) => round.status === "live");
+  const upcomingIndex = rounds.findIndex((round) => round.status === "upcoming");
+  const anchorIndex =
+    currentIndex >= 0
+      ? currentIndex
+      : upcomingIndex >= 0
+        ? upcomingIndex
+        : Math.max(0, rounds.length - 1);
+
+  const maxStart = Math.max(0, rounds.length - limit);
+  const start = Math.min(maxStart, Math.max(0, anchorIndex - Math.floor(limit / 2)));
+
+  return {
+    currentRoundId: currentIndex >= 0 ? rounds[currentIndex]!.eventId : null,
+    rounds: rounds.slice(start, start + limit),
   };
 }
 

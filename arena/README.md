@@ -18,6 +18,7 @@ NEXT_PUBLIC_BOT_API_URL=https://headlineodds-arena.fly.dev
 ```
 
 The mini app uses that backend for `/api/trade-state`.
+The redesigned mini app now loads from `/api/miniapp-state`, which includes live Bayse round data plus optional arena-specific trade state when opened with an arena code.
 
 ## Local commands
 

@@ -55,7 +55,11 @@ import {
   stopSolanaWalletMonitor,
 } from "./solana-wallet-monitor.ts";
 import { redis } from "./utils/rateLimit.ts";
-import { getCurrentRoundSnapshot } from "./bayse-market.ts";
+import {
+  getCurrentRoundSnapshot,
+  getMarketTimelineSnapshot,
+  type CurrentRoundSnapshot,
+} from "./bayse-market.ts";
 import { getFantasyLeagueStatusView } from "./fantasy-game.ts";
 import { getLatestFantasyTradeForMember } from "./db/fantasy.ts";
 import { saveFantasyTradeReference } from "./fantasy-state.ts";
@@ -91,6 +95,76 @@ async function isReplayedUpdate(updateId: number): Promise<boolean> {
   const key = `${REPLAY_KEY_PREFIX}${updateId}`;
   const result = await redis.set(key, "1", "EX", REPLAY_TTL_SECONDS, "NX");
   return result === null; // null means key already existed
+}
+
+function isTradeWindowOpen(round: Pick<NonNullable<CurrentRoundSnapshot["round"]>, "openingDate" | "closingDate"> | null): boolean {
+  if (!round) {
+    return false;
+  }
+
+  const roundOpenMs = Date.parse(round.openingDate);
+  const roundCloseMs = Date.parse(round.closingDate);
+
+  if (!Number.isFinite(roundOpenMs) || !Number.isFinite(roundCloseMs)) {
+    return false;
+  }
+
+  return Date.now() < roundOpenMs + (roundCloseMs - roundOpenMs) * 0.2;
+}
+
+async function buildArenaMiniAppState(input: {
+  tgId: number;
+  code: string;
+  snapshot: CurrentRoundSnapshot | null;
+  currentPrice: number | null;
+}) {
+  const view = await getFantasyLeagueStatusView(input.tgId, input.code);
+  const me = view.me;
+  if (!me) {
+    throw new Error("Not a member of this arena");
+  }
+
+  const pricing = input.snapshot?.pricing ?? null;
+  const round = input.snapshot?.round ?? null;
+  const tradeWindowOpen = isTradeWindowOpen(round);
+  const lastTrade = await getLatestFantasyTradeForMember(view.game.id, input.tgId);
+  const lockedThisRound = lastTrade && round
+    ? lastTrade.event_id === round.eventId
+    : false;
+
+  let ref = "";
+  if (tradeWindowOpen && !lockedThisRound && pricing && round) {
+    const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+    const refCurrentPrice = input.currentPrice ?? (await getRoundCurrentPrice(pricing));
+    ref = await saveFantasyTradeReference({
+      gameId: view.game.id,
+      eventId: round.eventId,
+      marketId: pricing.marketId,
+      openingDate: round.openingDate,
+      closingDate: round.closingDate,
+      currentPrice: refCurrentPrice,
+      referencePrice: pricing.eventThreshold,
+      upPrice: pricing.upPrice,
+      downPrice: pricing.downPrice,
+      upOutcomeId: pricing.upOutcomeId,
+      downOutcomeId: pricing.downOutcomeId,
+    });
+  }
+
+  return {
+    gameCode: view.game.code,
+    roundNumber: view.roundsPlayed + 1,
+    arenaEndAt: view.game.end_at,
+    virtualBalance: me.virtual_balance,
+    virtualStartBalance: view.game.virtual_start_balance,
+    place: me.place,
+    memberCount: view.memberCount,
+    prizeIfEndedNow: view.prizeIfEndedNow,
+    tradeWindowOpen,
+    lockedDirection: lockedThisRound ? lastTrade!.direction : null,
+    lockedAmount: lockedThisRound ? lastTrade!.stake : null,
+    ref,
+  };
 }
 
 app.set("trust proxy", true);
@@ -311,6 +385,64 @@ app.get("/health", healthRateLimit, async (req, res) => {
   });
 });
 
+app.get("/api/miniapp-state", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const tgId = Number(req.query["tgId"]);
+  const code = String(req.query["code"] ?? "").trim().toUpperCase();
+
+  try {
+    const [snapshot, timeline] = await Promise.all([
+      getCurrentRoundSnapshot("BTC"),
+      getMarketTimelineSnapshot("BTC", 7),
+    ]);
+
+    const pricing = snapshot?.pricing ?? null;
+    const round = snapshot?.round ?? null;
+    const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+    const currentPrice = pricing ? await getRoundCurrentPrice(pricing) : null;
+    const tradeWindowOpen = isTradeWindowOpen(round);
+
+    let arena = null;
+    let arenaError: string | null = null;
+
+    if (code && tgId) {
+      try {
+        arena = await buildArenaMiniAppState({
+          tgId,
+          code,
+          snapshot,
+          currentPrice,
+        });
+      } catch (error) {
+        arenaError = error instanceof Error ? error.message : "Failed to load arena.";
+      }
+    } else if (code && !tgId) {
+      arenaError = "Open this market from the Telegram bot to load your arena.";
+    }
+
+    res.json({
+      market: {
+        asset: "BTC",
+        title: "Bitcoin Up or Down - 15 minutes?",
+        currentPrice,
+        currentRoundId: timeline.currentRoundId ?? round?.eventId ?? null,
+        tradeWindowOpen,
+        round,
+        pricing,
+        rounds: timeline.rounds,
+        marketUrl: pricing?.url ?? null,
+        updatedAt: new Date().toISOString(),
+      },
+      arena,
+      arenaError,
+      requestedCode: code || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Internal error";
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.get("/api/trade-state", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const tgId = Number(req.query["tgId"]);
@@ -318,58 +450,36 @@ app.get("/api/trade-state", async (req, res) => {
   if (!tgId || !code) { res.status(400).json({ error: "tgId and code required" }); return; }
 
   try {
-    const [view, snapshot] = await Promise.all([
-      getFantasyLeagueStatusView(tgId, code),
-      getCurrentRoundSnapshot("BTC"),
-    ]);
-
-    const me = view.me;
-    if (!me) { res.status(403).json({ error: "Not a member of this arena" }); return; }
-
+    const snapshot = await getCurrentRoundSnapshot("BTC");
     const pricing = snapshot?.pricing ?? null;
+    const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+    const currentPrice = pricing ? await getRoundCurrentPrice(pricing) : null;
+    const arena = await buildArenaMiniAppState({
+      tgId,
+      code,
+      snapshot,
+      currentPrice,
+    });
     const round = snapshot?.round ?? null;
-    const roundOpenMs = round ? Date.parse(round.openingDate) : null;
-    const roundCloseMs = round ? Date.parse(round.closingDate) : null;
-    const tradeWindowOpen = roundOpenMs !== null && roundCloseMs !== null
-      ? Date.now() < roundOpenMs + (roundCloseMs - roundOpenMs) * 0.2
-      : false;
-
-    const lastTrade = await getLatestFantasyTradeForMember(view.game.id, tgId);
-    const lockedThisRound = lastTrade && round
-      ? lastTrade.event_id === round.eventId
-      : false;
-
-    let ref = "";
-    if (tradeWindowOpen && !lockedThisRound && pricing && round) {
-      const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
-      const currentPrice = await getRoundCurrentPrice(pricing);
-      ref = await saveFantasyTradeReference({
-        gameId: view.game.id, eventId: round.eventId, marketId: pricing.marketId,
-        openingDate: round.openingDate, closingDate: round.closingDate,
-        currentPrice, referencePrice: pricing.eventThreshold,
-        upPrice: pricing.upPrice, downPrice: pricing.downPrice,
-        upOutcomeId: pricing.upOutcomeId, downOutcomeId: pricing.downOutcomeId,
-      });
-    }
 
     res.json({
-      gameCode: view.game.code,
-      roundNumber: view.roundsPlayed + 1,
-      btcPrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
+      gameCode: arena.gameCode,
+      roundNumber: arena.roundNumber,
+      btcPrice: currentPrice ?? pricing?.eventThreshold ?? round?.eventThreshold ?? null,
       referencePrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
       upPrice: pricing?.upPrice ?? 0.5,
       downPrice: pricing?.downPrice ?? 0.5,
       roundClosingDate: round?.closingDate ?? null,
-      arenaEndAt: view.game.end_at,
-      virtualBalance: me.virtual_balance,
-      virtualStartBalance: view.game.virtual_start_balance,
-      place: me.place,
-      memberCount: view.memberCount,
-      prizeIfEndedNow: view.prizeIfEndedNow,
-      tradeWindowOpen,
-      lockedDirection: lockedThisRound ? lastTrade!.direction : null,
-      lockedAmount: lockedThisRound ? lastTrade!.stake : null,
-      ref,
+      arenaEndAt: arena.arenaEndAt,
+      virtualBalance: arena.virtualBalance,
+      virtualStartBalance: arena.virtualStartBalance,
+      place: arena.place,
+      memberCount: arena.memberCount,
+      prizeIfEndedNow: arena.prizeIfEndedNow,
+      tradeWindowOpen: arena.tradeWindowOpen,
+      lockedDirection: arena.lockedDirection,
+      lockedAmount: arena.lockedAmount,
+      ref: arena.ref,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Internal error";
