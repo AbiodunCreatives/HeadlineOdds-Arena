@@ -172,6 +172,18 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Wrap a value in an HTML code span for tap-to-copy */
+function c(value: string | number): string {
+  return `<code>${escapeHtml(String(value))}</code>`;
+}
+
 function formatMoney(
   value: number,
   options?: { minimumFractionDigits?: number; maximumFractionDigits?: number }
@@ -258,8 +270,8 @@ function buildArenaInsufficientBalanceText(
   return [
     "💸 Not enough USDC.",
     "",
-    `Entry fee:      ${formatMoney(entryFee)}`,
-    `Your balance:   ${formatUsdc(balance)}`,
+    `Entry fee:      ${c(formatMoney(entryFee))}`,
+    `Your balance:   ${c(formatUsdc(balance))}`,
     "",
     "Top up your wallet and come back.",
   ].join("\n");
@@ -398,7 +410,7 @@ function buildCreateArenaPickerText(balance: number): string {
     "Choose an entry fee — everyone who joins pays the same amount.",
     "The prize pool grows with every new player.",
     "",
-    `Your balance: ${formatUsdc(balance)}`,
+    `Your balance: ${c(formatUsdc(balance))}`,
   ].join("\n");
 }
 
@@ -419,18 +431,20 @@ function buildCreateArenaDurationText(input: {
   balance: number;
   entryFee: number;
 }): string {
+  const entryFeeText = formatMoney(input.entryFee, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+
   return [
     "⚡ Create an Arena",
     "",
-    `Entry fee: ${formatMoney(input.entryFee, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    })}`,
+    `Entry fee: ${c(entryFeeText)}`,
     "",
     "How long should the arena run?",
-    "Rounds fire every 15 minutes — 4 rounds per hour.",
+    `Rounds fire every ${c("15 minutes")} — ${c("4 rounds")} per hour.`,
     "",
-    `Your balance: ${formatUsdc(input.balance)}`,
+    `Your balance: ${c(formatUsdc(input.balance))}`,
   ].join("\n");
 }
 
@@ -460,7 +474,7 @@ function buildAgentPickerText(entryFee: number, durationHours: number): string {
   return [
     "🤖 Pick Your Agent",
     "",
-    `Entry: $${entryFee}  •  Duration: ${formatDurationHours(durationHours)}`,
+    `Entry: ${c(formatMoney(entryFee, { minimumFractionDigits: 0, maximumFractionDigits: 2 }))}  •  Duration: ${c(formatDurationHours(durationHours))}`,
     "",
     "Your agent will trade automatically each round using live BTC signals.",
     "You watch the leaderboard — your agent wins or loses real USDC for you.",
@@ -508,19 +522,19 @@ function buildArenaStatusText(input: {
   endAt: string;
 }): string {
   if (input.status === "OPEN") {
-    return `${input.code}  •  OPEN  •  Waiting for players`;
+    return `${c(input.code)}  •  OPEN  •  Waiting for players`;
   }
 
   const rankText =
-    input.rank === null ? "Unranked" : `Rank #${input.rank} of ${input.memberCount}`;
+    input.rank === null ? "Unranked" : `Rank ${c(`#${input.rank} of ${input.memberCount}`)}`;
   const endText =
     input.status === "LIVE"
-      ? `Ends ${formatCompactDuration(Date.parse(input.endAt) - Date.now())}`
+      ? `Ends ${c(formatCompactDuration(Date.parse(input.endAt) - Date.now()))}`
       : "Starts next round";
   const balanceText =
-    input.balance === null ? "" : `  •  ${formatWholeMoney(input.balance)}`;
+    input.balance === null ? "" : `  •  ${c(formatWholeMoney(input.balance))}`;
 
-  return `${input.code}  •  ${input.status}  •  ${rankText}${balanceText}  •  ${endText}`;
+  return `${c(input.code)}  •  ${escapeHtml(input.status)}  •  ${rankText}${balanceText}  •  ${endText}`;
 }
 
 function buildActiveArenaListKeyboard(codes: string[]): InlineKeyboard {
@@ -581,20 +595,20 @@ function buildArenaLobbyText(input: {
 
     for (const card of cards) {
       sections.push(
-        `${emoji} ${card.code}  ·  ${formatMoney(card.entryFee, {
+        `${emoji} ${c(card.code)}  ·  ${c(`${formatMoney(card.entryFee, {
           minimumFractionDigits: 0,
           maximumFractionDigits: 0,
-        })} entry  ·  ${card.memberCount} ${card.memberCount === 1 ? "player" : "players"}`,
-        `🏆 Prize pool: ${formatMoney(card.prizePool)}`
+        })} entry`)}  ·  ${c(`${card.memberCount} ${card.memberCount === 1 ? "player" : "players"}`)}`,
+        `🏆 Prize pool: ${c(formatMoney(card.prizePool))}`
       );
 
       if (state === "LIVE") {
-        sections.push(`⏱ Ends in: ${card.endsInText}`);
+        sections.push(`⏱ Ends in: ${c(card.endsInText)}`);
         if (card.topReturnPct !== null && card.memberCount >= 2) {
-          sections.push(`📈 Top player: ${formatSignedPercent(card.topReturnPct)}`);
+          sections.push(`📈 Top player: ${c(formatSignedPercent(card.topReturnPct))}`);
         }
       } else if (state === "FILLING" && card.startsInText) {
-        sections.push(`🕐 Starts in: ${card.startsInText}`);
+        sections.push(`🕐 Starts in: ${c(card.startsInText)}`);
       } else if (state === "OPEN") {
         sections.push(`🟢 Waiting for players`);
       }
@@ -688,23 +702,23 @@ function buildFantasyJoinPreviewText(input: {
   const startsInText =
     input.roundsUntilStart <= 0
       ? "Starts next BTC round"
-      : `Starts in ~${input.roundsUntilStart * 15} min`;
+      : `Starts in ${c(`~${input.roundsUntilStart * 15} min`)}`;
   const durationText = `${formatDurationHours(input.durationHours)}  ·  ${getRoundsForDurationHours(input.durationHours)} rounds`;
 
   return [
-    `⚡ Arena ${input.code}`,
+    `⚡ Arena ${c(input.code)}`,
     "",
-    `Entry fee:       ${formatMoney(input.entryFee)}`,
-    `Prize pool:      ${formatMoney(input.prizePool)}  (${input.playerCount} ${input.playerCount === 1 ? "player" : "players"})`,
-    `1st place wins:  ${formatMoney(input.projectedFirstPrize)}`,
+    `Entry fee:       ${c(formatMoney(input.entryFee))}`,
+    `Prize pool:      ${c(formatMoney(input.prizePool))}  (${c(`${input.playerCount} ${input.playerCount === 1 ? "player" : "players"}`)})`,
+    `1st place wins:  ${c(formatMoney(input.projectedFirstPrize))}`,
     "",
-    `Duration:        ${durationText}`,
+    `Duration:        ${c(durationText)}`,
     `${startsInText}`,
     input.currentLeaderName && input.currentLeaderReturnPct !== null
-      ? `Current leader:  ${input.currentLeaderName}  ${formatSignedPercent(input.currentLeaderReturnPct)}`
-      : `Starts:          ${formatDateTime(input.startAt)}`,
+      ? `Current leader:  ${escapeHtml(input.currentLeaderName)}  ${c(formatSignedPercent(input.currentLeaderReturnPct))}`
+      : `Starts:          ${c(formatDateTime(input.startAt))}`,
     "",
-    `Balance after joining:  ${formatMoney(input.afterJoiningBalance)}`,
+    `Balance after joining:  ${c(formatMoney(input.afterJoiningBalance))}`,
   ].join("\n");
 }
 
@@ -730,13 +744,13 @@ function buildFantasyCreateSuccessText(input: {
   return [
     "✅ Arena created!",
     "",
-    `Code:           ${input.code}`,
-    `Prize pool:     ${formatMoney(input.prizePool)}  (grows as others join)`,
-    `Your stack:     ${formatWholeMoney(input.virtualStack)}`,
-    `Duration:       ${formatDurationHours(input.durationHours)}`,
+    `Code:           ${c(input.code)}`,
+    `Prize pool:     ${c(formatMoney(input.prizePool))}  (grows as others join)`,
+    `Your stack:     ${c(formatWholeMoney(input.virtualStack))}`,
+    `Duration:       ${c(formatDurationHours(input.durationHours))}`,
     input.roundsUntilStart <= 0
       ? "Starts:         Next BTC round"
-      : `Starts:         ~${input.roundsUntilStart * 15} min`,
+      : `Starts:         ${c(`~${input.roundsUntilStart * 15} min`)}`,
     "",
     "I'll ping you when round 1 opens. Share the invite to fill the pool!",
   ].join("\n");
@@ -754,15 +768,15 @@ function buildFantasyJoinSuccessText(input: {
   return [
     "🟢 You're in!",
     "",
-    `Arena:          ${input.code}`,
-    `Your stack:     ${formatWholeMoney(input.virtualBalance)}`,
-    `Prize pool:     ${formatMoney(input.prizePool)}  (${input.playerCount} ${input.playerCount === 1 ? "player" : "players"})`,
-    `Duration:       ${formatDurationHours(input.durationHours)}`,
+    `Arena:          ${c(input.code)}`,
+    `Your stack:     ${c(formatWholeMoney(input.virtualBalance))}`,
+    `Prize pool:     ${c(formatMoney(input.prizePool))}  (${c(`${input.playerCount} ${input.playerCount === 1 ? "player" : "players"}`)})`,
+    `Duration:       ${c(formatDurationHours(input.durationHours))}`,
     "",
     input.roundsUntilStart <= 0
       ? "Starts:         Next BTC round"
-      : `Starts in:      ~${input.roundsUntilStart * 15} min`,
-    `Wallet balance: ${formatUsdc(input.playBalance)}`,
+      : `Starts in:      ${c(`~${input.roundsUntilStart * 15} min`)}`,
+    `Wallet balance: ${c(formatUsdc(input.playBalance))}`,
     "",
     "I'll ping you when round 1 opens.",
   ].join("\n");
@@ -772,7 +786,7 @@ function buildInsufficientBalanceWithOptionsText(balance: number): string {
   return [
     "💸 Your balance is too low to join an arena.",
     "",
-    `Current balance: ${formatUsdc(balance)}`,
+    `Current balance: ${c(formatUsdc(balance))}`,
     "",
     "Top up your wallet to get started.",
   ].join("\n");
@@ -814,7 +828,8 @@ function buildCustomFundsPromptText(): string {
 
 function buildFundsAddedText(amount: number, balance: number): string {
   return [
-    `Wallet balance: ${formatUsdc(balance)}`,
+    `Credited: ${c(formatUsdc(amount))}`,
+    `Wallet balance: ${c(formatUsdc(balance))}`,
     "",
     "Your deposit has been credited.",
   ].join("\n");
@@ -837,14 +852,14 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
         : entry.entry_type === "fantasy_prize" ? "Prize payout"
         : entry.entry_type === "withdrawal_request" ? "Withdrawal"
         : entry.entry_type.replace(/_/g, " ");
-      return `  ${sign}${formatUsdc(entry.amount)}  ${label}`;
+      return `  ${sign}${c(formatUsdc(entry.amount))}  ${escapeHtml(label)}`;
     });
 
   const withdrawalLines = summary.recentWithdrawals.length === 0
     ? ["  —"]
     : summary.recentWithdrawals.slice(0, 3).map((e) => {
         const icon = e.status === "completed" ? "done" : e.status === "failed" ? "failed" : "pending";
-        return `  <code>${formatUsdc(e.amount)}</code>  →  <code>${abbreviateAddress(e.destination_address)}</code>  [${icon}]`;
+        return `  ${c(formatUsdc(e.amount))}  →  ${c(e.destination_address)}  [${escapeHtml(icon)}]`;
       });
 
   const onrampCount = summary.recentOnramps.length;
@@ -853,7 +868,7 @@ function buildWalletText(summary: Awaited<ReturnType<typeof getFantasyWalletSumm
     : summary.recentOnramps.slice(0, 3).map((e) => {
         const amt = e.actual_usdc_amount > 0 ? e.actual_usdc_amount : e.expected_usdc_amount;
         const icon = e.status.toUpperCase() === "COMPLETED" ? "done" : e.status.toUpperCase() === "FAILED" ? "failed" : "pending";
-        return `  <code>₦${Math.round(e.fiat_amount).toLocaleString("en-US")}</code>  →  <code>${formatUsdc(amt)}</code>  [${icon}]`;
+        return `  ${c(`₦${Math.round(e.fiat_amount).toLocaleString("en-US")}`)}  →  ${c(formatUsdc(amt))}  [${escapeHtml(icon)}]`;
       });
 
   const addr = summary.wallet.owner_address;
@@ -915,11 +930,11 @@ function buildWalletCrossChainResultText(input: {
   return [
     "<b>CROSS-CHAIN DEPOSIT</b>",
     "",
-    `Send your ${input.originSymbol} to`,
-    `<code>${input.depositAddress}</code>`,
+    `Send your ${escapeHtml(input.originSymbol)} to`,
+    c(input.depositAddress),
     "",
-    `Expected credit  <code>~${formatUsdc(input.expectedUsdcOut)}</code>`,
-    `Expires in       ${expiryMinutes} min`,
+    `Expected credit  ${c(`~${formatUsdc(input.expectedUsdcOut)}`)}`,
+    `Expires in       ${c(`${expiryMinutes} min`)}`,
     "",
     "USDC will appear in your wallet automatically after confirmation.",
   ].join("\n");
@@ -950,8 +965,8 @@ function buildWalletNairaPickerKeyboard(): InlineKeyboard {
 function buildWalletNairaCustomAmountText(): string {
   return [
     "💵 Custom amount",
-    `Type any amount between ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)} and ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}.`,
-    "e.g.  3500  or  ₦3,500",
+    `Type any amount between ${c(formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT))} and ${c(formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT))}.`,
+    `e.g.  ${c("3500")}  or  ${c("₦3,500")}`,
   ].join("\n");
 }
 
@@ -969,7 +984,7 @@ function buildWalletNairaCustomAmountKeyboard(): InlineKeyboard {
 function buildWalletNairaAmountValidationText(message?: string): string {
   return [
     message ?? "Invalid amount.",
-    `Min: ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}  •  Max: ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}`,
+    `Min: ${c(formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT))}  •  Max: ${c(formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT))}`,
   ].join("\n");
 }
 
@@ -996,13 +1011,13 @@ function getWalletNairaAmountError(amount: number): string | null {
 
   if (amount < WALLET_NAIRA_MIN_AMOUNT) {
     return buildWalletNairaAmountValidationText(
-      `Minimum Fund NGN amount is ${formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT)}.`
+      `Minimum Fund NGN amount is ${c(formatNairaCompact(WALLET_NAIRA_MIN_AMOUNT))}.`
     );
   }
 
   if (amount > WALLET_NAIRA_MAX_AMOUNT) {
     return buildWalletNairaAmountValidationText(
-      `Maximum Fund NGN amount for now is ${formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT)}.`
+      `Maximum Fund NGN amount for now is ${c(formatNairaCompact(WALLET_NAIRA_MAX_AMOUNT))}.`
     );
   }
 
@@ -1021,10 +1036,10 @@ function buildWalletCommandHelpText(): string {
   return [
     "💳 Wallet commands",
     "",
-    "  /wallet                          — View balance & deposit address",
-    "  /wallet refresh                  — Sync deposits & withdrawals",
-    "  /wallet fund-ngn 10000           — Create a Naira top-up order",
-    "  /wallet withdraw 5 <address>     — Withdraw USDC to Solana",
+    `  ${c("/wallet")}                          — View balance & deposit address`,
+    `  ${c("/wallet refresh")}                  — Sync deposits & withdrawals`,
+    `  ${c("/wallet fund-ngn 10000")}           — Create a Naira top-up order`,
+    `  ${c("/wallet withdraw 5 <address>")}     — Withdraw USDC to Solana`,
   ].join("\n");
 }
 
@@ -1032,17 +1047,17 @@ function buildWalletWithdrawAmountText(balance: number): string {
   return [
     "📤 Withdraw USDC",
     "",
-    `Your balance: ${formatUsdc(balance)}`,
-    `Minimum: ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}`,
+    `Your balance: ${c(formatUsdc(balance))}`,
+    `Minimum: ${c(formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT))}`,
     "",
     "How much do you want to withdraw?",
-    "Type an amount, e.g.  5  or  10.50",
+    `Type an amount, e.g.  ${c("5")}  or  ${c("10.50")}`,
   ].join("\n");
 }
 
 function buildWalletWithdrawAddressText(amount: number): string {
   return [
-    `📤 Withdraw ${formatUsdc(amount)}`,
+    `📤 Withdraw ${c(formatUsdc(amount))}`,
     "",
     "Paste your Solana wallet address:",
   ].join("\n");
@@ -1063,14 +1078,14 @@ function buildWalletNairaOrderText(input: {
   return [
     "💰 NGN top-up order ready",
     "",
-    `Send:           ${formatNaira(input.fiatAmount)}`,
-    `You'll receive: ~${formatUsdc(input.expectedUsdcAmount)}`,
+    `Send:           ${c(formatNaira(input.fiatAmount))}`,
+    `You'll receive: ${c(`~${formatUsdc(input.expectedUsdcAmount)}`)}`,
     "",
     "Transfer to:",
-    `  ${input.accountName}`,
-    `  ${input.accountNumber}  ·  ${input.bankName}`,
+    `  ${escapeHtml(input.accountName)}`,
+    `  ${c(input.accountNumber)}  ·  ${escapeHtml(input.bankName)}`,
     "",
-    `Reference: ${input.orderId}`,
+    `Reference: ${c(input.orderId)}`,
     "",
     "Your balance updates automatically once USDC arrives.",
   ].join("\n");
@@ -1102,8 +1117,8 @@ function buildWalletWithdrawalRequestedText(input: {
   return [
     "✅ Withdrawal queued",
     "",
-    `Amount:  ${formatUsdc(input.amount)}`,
-    `To:      ${abbreviateAddress(input.destinationAddress)}`,
+    `Amount:  ${c(formatUsdc(input.amount))}`,
+    `To:      ${c(input.destinationAddress)}`,
     "",
     "The Solana transfer will broadcast shortly.",
   ].join("\n");
@@ -1117,11 +1132,11 @@ function buildCatchUpText(input: {
   requiredReturnMultiple: number;
 }): string {
   return [
-    `📊 ${input.leaderName} is ${formatWholeMoney(input.gap)} ahead of you.`,
+    `📊 ${escapeHtml(input.leaderName)} is ${c(formatWholeMoney(input.gap))} ahead of you.`,
     "",
     "To close the gap in one trade:",
-    `  Stake ${formatWholeMoney(input.suggestedStake)} on the next round`,
-    `  You'd need roughly a ${input.requiredReturnMultiple.toFixed(2)}x return`,
+    `  Stake ${c(formatWholeMoney(input.suggestedStake))} on the next round`,
+    `  You'd need roughly a ${c(`${input.requiredReturnMultiple.toFixed(2)}x`)} return`,
     "",
     "High risk — but doable across 2–3 strong rounds.",
   ].join("\n");
@@ -1211,21 +1226,21 @@ function buildLeagueHelpText(): string {
   return [
     "🏟 HeadlineOdds Arena — Commands",
     "",
-    "/start              — Home screen",
-    "/wallet             — Your USDC wallet & deposit address",
-    "/fundngn            — Top up via Naira bank transfer",
-    "/offrampngn         — Convert USDC back to Naira",
-    "/withdraw <amt> <addr>  — Withdraw USDC to Solana",
-    "/league             — Your active arenas",
-    "/create <fee> <hrs> — Create an arena  e.g. /create 5 12",
-    "/join <code>        — Join an arena by code",
-    "/live <code>        — Current round & live market",
-    "/board <code>       — Leaderboard",
-    "/status <code>      — Arena details",
-    "/chart              — BTC 15m chart",
+    `${c("/start")}              — Home screen`,
+    `${c("/wallet")}             — Your USDC wallet & deposit address`,
+    `${c("/fundngn")}            — Top up via Naira bank transfer`,
+    `${c("/offrampngn")}         — Convert USDC back to Naira`,
+    `${c("/withdraw <amt> <addr>")}  — Withdraw USDC to Solana`,
+    `${c("/league")}             — Your active arenas`,
+    `${c("/create <fee> <hrs>")} — Create an arena  e.g. ${c("/create 5 12")}`,
+    `${c("/join <code>")}        — Join an arena by code`,
+    `${c("/live <code>")}        — Current round & live market`,
+    `${c("/board <code>")}       — Leaderboard`,
+    `${c("/status <code>")}      — Arena details`,
+    `${c("/chart")}              — BTC 15m chart`,
     "",
-    "Entry fees: $1–$10  ·  Durations: 3h / 9h / 12h / 24h",
-    "4 rounds per hour  ·  8% commission on prize pool",
+    `Entry fees: ${c("$1–$10")}  ·  Durations: ${c("3h / 9h / 12h / 24h")}`,
+    `${c("4 rounds per hour")}  ·  ${c("8% commission")} on prize pool`,
   ].join("\n");
 }
 
@@ -1298,7 +1313,8 @@ async function replyFantasyCreateError(
     await editTradePromptMessage(
       ctx,
       buildArenaInsufficientBalanceText(entryFee, balance),
-      buildCreateInsufficientKeyboard()
+      buildCreateInsufficientKeyboard(),
+      "HTML"
     );
     return;
   }
@@ -1373,6 +1389,7 @@ async function replyFantasyJoinError(
     const entryFee = details?.game.entry_fee ?? 0;
 
     await ctx.reply(buildArenaInsufficientBalanceText(entryFee, balance), {
+      parse_mode: "HTML",
       reply_markup: buildInsufficientBalanceKeyboard(),
     });
     return;
@@ -1435,12 +1452,12 @@ function buildTradeLockedText(result: FantasyTradePlacementResult): string {
   const profit = roundMoney(result.shares - result.stake);
   const profitLabel = profit >= 0 ? `+${formatMoney(profit)}` : formatMoney(profit);
   return [
-    `✅ Round ${result.roundNumber} locked · ${result.game.code}`,
+    `✅ Round ${c(`#${result.roundNumber}`)} locked · ${c(result.game.code)}`,
     "",
     `Direction:        ${result.direction === "UP" ? "⬆ YES" : "⬇ NO"}`,
-    `Stake:            ${formatMoney(result.stake)}`,
-    `If correct:       ${profitLabel} profit`,
-    `Balance:          ${formatMoney(result.remainingBalance)}`,
+    `Stake:            ${c(formatMoney(result.stake))}`,
+    `If correct:       ${c(profitLabel)} profit`,
+    `Balance:          ${c(formatMoney(result.remainingBalance))}`,
     "",
     "Result arrives when the round closes. Good luck! 🎯",
   ].join("\n");
@@ -1525,7 +1542,8 @@ async function renderArenaLobby(
       open,
       joinedCodes,
       liveOnly: options?.liveOnly,
-    })
+    }),
+    "HTML"
   );
 }
 
@@ -1564,7 +1582,8 @@ async function openLobbyOrFundingPrompt(
     await editTradePromptMessage(
       ctx,
       buildInsufficientBalanceWithOptionsText(balance),
-      buildInsufficientBalanceKeyboard()
+      buildInsufficientBalanceKeyboard(),
+      "HTML"
     );
     return;
   }
@@ -1599,6 +1618,7 @@ async function renderArenaStatusList(ctx: Context, telegramId: number): Promise<
   await ctx.reply(
     ["Your active arenas:", "", ...lines].join("\n"),
     {
+      parse_mode: "HTML",
       reply_markup: buildActiveArenaListKeyboard(
         snapshots.map((snapshot) => snapshot.game.code)
       ),
@@ -1620,7 +1640,8 @@ async function presentJoinPreview(
     await editTradePromptMessage(
       ctx,
       buildArenaInsufficientBalanceText(preview.game.entry_fee, balance),
-      buildInsufficientBalanceKeyboard()
+      buildInsufficientBalanceKeyboard(),
+      "HTML"
     );
     return;
   }
@@ -1644,7 +1665,8 @@ async function presentJoinPreview(
       balance,
       afterJoiningBalance: roundMoney(balance - preview.game.entry_fee),
     }),
-    buildFantasyJoinPreviewKeyboard(preview.game.entry_fee)
+    buildFantasyJoinPreviewKeyboard(preview.game.entry_fee),
+    "HTML"
   );
 }
 
@@ -1685,7 +1707,7 @@ function buildArenaLiveText(input: {
   }
 
   lines.push(
-    `⚡ Arena ${input.view.game.code}  •  ${isActive ? "LIVE" : input.view.game.status.toUpperCase()}`,
+    `⚡ Arena ${c(input.view.game.code)}  •  ${escapeHtml(isActive ? "LIVE" : input.view.game.status.toUpperCase())}`,
     ""
   );
 
@@ -1696,31 +1718,31 @@ function buildArenaLiveText(input: {
       100;
 
     lines.push(
-      `Your position: #${input.view.me!.place} of ${input.view.memberCount}`,
-      `Stack: ${formatWholeMoney(input.view.me!.virtual_balance)}  (${formatSignedPercent(
+      `Your position: ${c(`#${input.view.me!.place} of ${input.view.memberCount}`)}`,
+      `Stack: ${c(formatWholeMoney(input.view.me!.virtual_balance))}  (${c(formatSignedPercent(
         returnPct
-      )})`,
-      `Prize if game ends now: ${formatMoney(input.view.prizeIfEndedNow)}`
+      ))})`,
+      `Prize if game ends now: ${c(formatMoney(input.view.prizeIfEndedNow))}`
     );
   } else {
-    lines.push(`Players: ${input.view.memberCount}`, "Mode: Spectator");
+    lines.push(`Players: ${c(input.view.memberCount)}`, "Mode: Spectator");
   }
 
   if (!isActive) {
     lines.push(
       "",
       input.view.game.status === "open"
-        ? `Arena starts: ${formatDateTime(input.view.game.start_at)}`
-        : `Arena ended: ${formatDateTime(input.view.game.end_at)}`,
+        ? `Arena starts: ${c(formatDateTime(input.view.game.start_at))}`
+        : `Arena ended: ${c(formatDateTime(input.view.game.end_at))}`,
       input.view.game.status === "open"
-        ? `Starts in: ~${Math.max(1, getApproxRoundsUntil(input.view.game.start_at)) * 15} min`
+        ? `Starts in: ${c(`~${Math.max(1, getApproxRoundsUntil(input.view.game.start_at)) * 15} min`)}`
         : "No live Bayse market for this arena right now."
     );
 
     return lines.join("\n");
   }
 
-  lines.push(`Arena time left: ${formatCompactDuration(arenaMsRemaining)}`);
+  lines.push(`Arena time left: ${c(formatCompactDuration(arenaMsRemaining))}`);
 
   if (!input.snapshot?.pricing) {
     lines.push("", "Current Bayse BTC market is unavailable right now. Try again in a minute.");
@@ -1737,19 +1759,19 @@ function buildArenaLiveText(input: {
 
   lines.push(
     "",
-    `Current round: #${roundNumber}`,
-    `BTC/USD: ${formatBtcPrice(
+    `Current round: ${c(`#${roundNumber}`)}`,
+    `BTC/USD: ${c(formatBtcPrice(
       input.snapshot.pricing.eventThreshold ?? input.snapshot.round.eventThreshold
-    )}`,
-    `↑ UP  ${formatProbabilityPrice(input.snapshot.pricing.upPrice)}   •   ↓ DOWN  ${formatProbabilityPrice(
+    ))}`,
+    `↑ UP  ${c(formatProbabilityPrice(input.snapshot.pricing.upPrice))}   •   ↓ DOWN  ${c(formatProbabilityPrice(
       input.snapshot.pricing.downPrice
-    )}`,
-    `Round time left: ${formatRoundCountdown(input.snapshot.round.closingDate)}`,
-    `Round closes: ${formatDateTime(input.snapshot.round.closingDate)}`,
+    ))}`,
+    `Round time left: ${c(formatRoundCountdown(input.snapshot.round.closingDate))}`,
+    `Round closes: ${c(formatDateTime(input.snapshot.round.closingDate))}`,
     tradeWindowCloseMs === null
       ? "Trade window: unavailable"
       : tradeWindowCloseMs > Date.now()
-      ? `⚡ Trade window: ${formatCompactDuration(tradeWindowCloseMs - Date.now())} left — tap Trade below`
+      ? `⚡ Trade window: ${c(formatCompactDuration(tradeWindowCloseMs - Date.now()))} left — tap Trade below`
       : "Trade window closed • Next round opens soon"
   );
 
@@ -1785,7 +1807,8 @@ async function renderArenaLiveView(
         const close = Date.parse(snapshot.round.closingDate);
         return Date.now() < open + (close - open) * 0.2;
       })(),
-    })
+    }),
+    "HTML"
   );
 }
 
@@ -1804,33 +1827,33 @@ async function renderArenaStatusView(
         )}%)`
       : "0/0 (0%)";
   const lastRoundText = view.lastTrade
-    ? `${view.lastTrade.direction} ${
+    ? `${escapeHtml(view.lastTrade.direction)} ${
         view.lastTrade.outcome === "WIN"
           ? "✅"
           : view.lastTrade.outcome === "LOSS"
             ? "❌"
             : "•"
-      }  ${view.lastTrade.outcome === "WIN" ? `+${formatMoney(view.lastTrade.payout)}` : ""}`.trim()
+      }  ${view.lastTrade.outcome === "WIN" ? c(`+${formatMoney(view.lastTrade.payout)}`) : ""}`.trim()
     : "No trades yet";
 
   const text = [
-    `Arena ${view.game.code}  •  ${view.game.status.toUpperCase()}`,
+    `Arena ${c(view.game.code)}  •  ${escapeHtml(view.game.status.toUpperCase())}`,
     "",
     `Your position: ${
-      view.me ? `#${view.me.place} of ${view.memberCount}` : "Not joined"
+      view.me ? c(`#${view.me.place} of ${view.memberCount}`) : "Not joined"
     }`,
-    `Stack: ${formatWholeMoney(view.me?.virtual_balance ?? view.game.virtual_start_balance)}  (${formatSignedPercent(
+    `Stack: ${c(formatWholeMoney(view.me?.virtual_balance ?? view.game.virtual_start_balance))}  (${c(formatSignedPercent(
       view.me
         ? ((view.me.virtual_balance - view.game.virtual_start_balance) /
             view.game.virtual_start_balance) *
             100
         : 0
-    )})`,
-    `Rounds left: ~${view.roundsLeft}  (~${view.roundsLeft * 15} min)`,
-    `Prize if game ends now: ${formatMoney(view.prizeIfEndedNow)}`,
+    ))})`,
+    `Rounds left: ${c(`~${view.roundsLeft}  (~${view.roundsLeft * 15} min)`)}`,
+    `Prize if game ends now: ${c(formatMoney(view.prizeIfEndedNow))}`,
     "",
     `Last round: ${lastRoundText}`,
-    `Accuracy: ${accuracyText}`,
+    `Accuracy: ${c(accuracyText)}`,
   ].join("\n");
 
   await editTradePromptMessage(
@@ -1838,7 +1861,8 @@ async function renderArenaStatusView(
     text,
     new InlineKeyboard()
       .text("Full leaderboard", `arena:board:${view.game.code}`)
-      .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY)
+      .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY),
+    "HTML"
   );
 }
 
@@ -1889,7 +1913,8 @@ async function renderCatchUpView(
     }),
     new InlineKeyboard()
       .text("Back to leaderboard", `arena:board:${code}`)
-      .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY)
+      .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY),
+    "HTML"
   );
 }
 
@@ -1936,7 +1961,8 @@ async function renderCreateArenaDurationPicker(
       balance,
       entryFee,
     }),
-    buildCreateArenaDurationKeyboard(entryFee)
+    buildCreateArenaDurationKeyboard(entryFee),
+    "HTML"
   );
 }
 
@@ -1961,7 +1987,8 @@ async function createArenaFromSelection(
       roundsUntilStart: getApproxRoundsUntil(game.start_at),
       durationHours: getGameDurationHours(game),
     }),
-    buildFantasyCreateSuccessKeyboard(shareUrl)
+    buildFantasyCreateSuccessKeyboard(shareUrl),
+    "HTML"
   );
 }
 
@@ -2102,7 +2129,7 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     const balance = await getBalance(ctx.from.id);
     await saveWithdrawState(ctx.from.id, { step: "amount" });
-    await editTradePromptMessage(ctx, buildWalletWithdrawAmountText(balance), buildWithdrawCancelKeyboard());
+    await editTradePromptMessage(ctx, buildWalletWithdrawAmountText(balance), buildWithdrawCancelKeyboard(), "HTML");
     return;
   }
 
@@ -2141,7 +2168,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await editTradePromptMessage(
       ctx,
       buildWalletNairaCustomAmountText(),
-      buildWalletNairaCustomAmountKeyboard()
+      buildWalletNairaCustomAmountKeyboard(),
+      "HTML"
     );
     return;
   }
@@ -2162,14 +2190,15 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       await editTradePromptMessage(
         ctx,
         amountError,
-        buildWalletNairaPickerKeyboard()
+        buildWalletNairaPickerKeyboard(),
+        "HTML"
       );
       return;
     }
 
     try {
       const orderText = await createWalletNairaOrderText(ctx.from.id, amount);
-      await editTradePromptMessage(ctx, orderText, buildWalletNairaOrderKeyboard());
+      await editTradePromptMessage(ctx, orderText, buildWalletNairaOrderKeyboard(), "HTML");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
       await editTradePromptMessage(
@@ -2204,7 +2233,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await editTradePromptMessage(
       ctx,
       buildCreateArenaPickerText(balance),
-      buildCreateArenaPickerKeyboard(ctx.from.id)
+      buildCreateArenaPickerKeyboard(ctx.from.id),
+      "HTML"
     );
     return;
   }
@@ -2243,17 +2273,17 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
         [
           `✅ Account confirmed`,
           "",
-          `Name:    ${accountName}`,
-          `Number:  ${session.accountNumber}`,
-          `Bank:    ${confirmation.bank?.name ?? bankName}`,
+          `Name:    ${escapeHtml(accountName)}`,
+          `Number:  ${c(session.accountNumber)}`,
+          `Bank:    ${escapeHtml(confirmation.bank?.name ?? bankName)}`,
           "",
-          `Enter the USDC amount to convert (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
+          `Enter the USDC amount to convert (minimum ${c(formatUsdc(PAJCASH_OFFRAMP_MIN_USDC))}):`,
         ].join("\n"),
-        { reply_markup: buildOfframpCancelKeyboard() }
+        { parse_mode: "HTML", reply_markup: buildOfframpCancelKeyboard() }
       ).catch(() =>
         ctx.reply(
-          `✅ Account confirmed: ${accountName}\n\nEnter USDC amount (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}):`,
-          { reply_markup: buildOfframpCancelKeyboard() }
+          `✅ Account confirmed: ${escapeHtml(accountName)}\n\nEnter USDC amount (minimum ${c(formatUsdc(PAJCASH_OFFRAMP_MIN_USDC))}):`,
+          { parse_mode: "HTML", reply_markup: buildOfframpCancelKeyboard() }
         )
       );
     } catch (error) {
@@ -2299,8 +2329,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
         fundingSignature: result.fundingSignature,
       });
 
-      await ctx.editMessageText(resultText, { reply_markup: buildWalletKeyboard() }).catch(() =>
-        ctx.reply(resultText, { reply_markup: buildWalletKeyboard() })
+      await ctx.editMessageText(resultText, { parse_mode: "HTML", reply_markup: buildWalletKeyboard() }).catch(() =>
+        ctx.reply(resultText, { parse_mode: "HTML", reply_markup: buildWalletKeyboard() })
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
@@ -2316,8 +2346,9 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await savePendingCustomArenaFee(ctx.from.id);
     await editTradePromptMessage(
       ctx,
-      `✏️ Enter your custom entry fee (e.g. 15):\nMin: $0.50  ·  Max: $50`,
-      new InlineKeyboard().text("← Back", ARENA_CREATE)
+      `✏️ Enter your custom entry fee (e.g. ${c("15")}):\nMin: ${c("$0.50")}  ·  Max: ${c("$50")}`,
+      new InlineKeyboard().text("← Back", ARENA_CREATE),
+      "HTML"
     );
     return;
   }
@@ -2349,7 +2380,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
     await editTradePromptMessage(
       ctx,
       buildAgentPickerText(entryFee, durationHours),
-      buildAgentPickerKeyboard(entryFee, durationHours)
+      buildAgentPickerKeyboard(entryFee, durationHours),
+      "HTML"
     );
     return;
   }
@@ -2378,7 +2410,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
             roundsUntilStart: getApproxRoundsUntil(game.start_at),
             durationHours: getGameDurationHours(game),
           }),
-          buildFantasyCreateSuccessKeyboard(shareUrl)
+          buildFantasyCreateSuccessKeyboard(shareUrl),
+          "HTML"
         );
       } else {
         await createArenaFromSelection(ctx, ctx.from.id, entryFee, durationHours);
@@ -2486,14 +2519,14 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
   if (await hasPendingCustomArenaFee(ctx.from.id)) {
     const fee = Number.parseFloat(messageText.replace(/[^0-9.]/g, ""));
     if (!Number.isFinite(fee) || fee <= 0) {
-      await ctx.reply("Enter a valid fee, e.g. 0.20");
+      await ctx.reply(`Enter a valid fee, e.g. ${c("0.20")}`, { parse_mode: "HTML" });
       return true;
     }
     await clearPendingCustomArenaFee(ctx.from.id);
     const balance = await getBalance(ctx.from.id);
     await ctx.reply(
       buildCreateArenaDurationText({ balance, entryFee: fee }),
-      { reply_markup: buildCreateArenaDurationKeyboard(fee) }
+      { parse_mode: "HTML", reply_markup: buildCreateArenaDurationKeyboard(fee) }
     );
     return true;
   }
@@ -2503,12 +2536,12 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
   if (ccSession?.step === "awaiting_amount") {
     const amount = Number(messageText.replace(/[^0-9.]/g, ""));
     if (!Number.isFinite(amount) || amount <= 0) {
-      await ctx.reply("Enter a valid amount, e.g. 10", { reply_markup: buildCrossChainAmountPromptKeyboard() });
+      await ctx.reply(`Enter a valid amount, e.g. ${c("10")}`, { parse_mode: "HTML", reply_markup: buildCrossChainAmountPromptKeyboard() });
       return true;
     }
     const updated: CrossChainSession = { ...ccSession, step: "pending_confirm", amount: String(amount) };
     await saveCrossChainSession(ctx.from.id, updated);
-    await ctx.reply(buildCrossChainConfirmText(updated), { reply_markup: buildCrossChainConfirmKeyboard() });
+    await ctx.reply(buildCrossChainConfirmText(updated), { parse_mode: "HTML", reply_markup: buildCrossChainConfirmKeyboard() });
     return true;
   }
 
@@ -2519,8 +2552,9 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
     if (offrampSession.step === "awaiting_bank_account") {
       const accountNumber = messageText.replace(/\D/g, "");
 
-      if (accountNumber.length < 10) {
-        await ctx.reply("Enter a valid 10-digit bank account number.", {
+        if (accountNumber.length < 10) {
+        await ctx.reply(`Enter a valid ${c("10-digit")} bank account number.`, {
+          parse_mode: "HTML",
           reply_markup: buildOfframpCancelKeyboard(),
         });
         return true;
@@ -2557,7 +2591,8 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
         keyboard.text("❌ Cancel", OFFRAMP_CANCEL);
 
-        await ctx.reply(`Account number: ${accountNumber}\n\nSelect your bank:`, {
+        await ctx.reply(`Account number: ${c(accountNumber)}\n\nSelect your bank:`, {
+          parse_mode: "HTML",
           reply_markup: keyboard,
         });
       } catch (error) {
@@ -2573,8 +2608,8 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
       if (!Number.isFinite(usdcAmount) || usdcAmount < PAJCASH_OFFRAMP_MIN_USDC) {
         await ctx.reply(
-          `Enter a valid USDC amount (minimum ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}).`,
-          { reply_markup: buildOfframpCancelKeyboard() }
+          `Enter a valid USDC amount (minimum ${c(formatUsdc(PAJCASH_OFFRAMP_MIN_USDC))}).`,
+          { parse_mode: "HTML", reply_markup: buildOfframpCancelKeyboard() }
         );
         return true;
       }
@@ -2583,8 +2618,8 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
       if (balance < usdcAmount) {
         await ctx.reply(
-          `💸 Insufficient balance.\n\nAvailable: ${formatUsdc(balance)}`,
-          { reply_markup: buildOfframpCancelKeyboard() }
+          `💸 Insufficient balance.\n\nAvailable: ${c(formatUsdc(balance))}`,
+          { parse_mode: "HTML", reply_markup: buildOfframpCancelKeyboard() }
         );
         return true;
       }
@@ -2599,14 +2634,14 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
         [
           "⚠️ Confirm offramp",
           "",
-          `Account:       ${offrampSession.accountName}`,
-          `Number:        ${offrampSession.accountNumber}`,
-          `Bank:          ${offrampSession.bankName}`,
-          `USDC to send:  ${formatUsdc(usdcAmount)}`,
+          `Account:       ${escapeHtml(offrampSession.accountName ?? "")}`,
+          `Number:        ${c(offrampSession.accountNumber ?? "")}`,
+          `Bank:          ${escapeHtml(offrampSession.bankName ?? "")}`,
+          `USDC to send:  ${c(formatUsdc(usdcAmount))}`,
           "",
           "The USDC will be sent on-chain to PajCash, then your in-bot balance is debited.",
         ].join("\n"),
-        { reply_markup: buildOfframpConfirmKeyboard() }
+        { parse_mode: "HTML", reply_markup: buildOfframpConfirmKeyboard() }
       );
 
       return true;
@@ -2639,21 +2674,21 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
       if (!Number.isFinite(amount) || amount < config.SOLANA_WITHDRAW_MIN_AMOUNT) {
         const balance = await getBalance(ctx.from.id);
         await ctx.reply(
-          `Minimum withdrawal is ${formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT)}. Enter a valid amount.`,
-          { reply_markup: buildWithdrawCancelKeyboard() }
+          `Minimum withdrawal is ${c(formatUsdc(config.SOLANA_WITHDRAW_MIN_AMOUNT))}. Enter a valid amount.`,
+          { parse_mode: "HTML", reply_markup: buildWithdrawCancelKeyboard() }
         );
         return true;
       }
       const balance = await getBalance(ctx.from.id);
       if (amount > balance) {
         await ctx.reply(
-          `You only have ${formatUsdc(balance)}. Enter a lower amount.`,
-          { reply_markup: buildWithdrawCancelKeyboard() }
+          `You only have ${c(formatUsdc(balance))}. Enter a lower amount.`,
+          { parse_mode: "HTML", reply_markup: buildWithdrawCancelKeyboard() }
         );
         return true;
       }
       await saveWithdrawState(ctx.from.id, { step: "address", amount });
-      await ctx.reply(buildWalletWithdrawAddressText(amount), { reply_markup: buildWithdrawCancelKeyboard() });
+      await ctx.reply(buildWalletWithdrawAddressText(amount), { parse_mode: "HTML", reply_markup: buildWithdrawCancelKeyboard() });
       return true;
     }
 
@@ -2670,6 +2705,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
         await requestFantasyWalletWithdrawal({ telegramId: ctx.from.id, destinationAddress: address, amount: withdrawState.amount });
         await processFantasyWalletWithdrawals();
         await ctx.reply(buildWalletWithdrawalRequestedText({ amount: withdrawState.amount, destinationAddress: address }), {
+          parse_mode: "HTML",
           reply_markup: buildWalletKeyboard(),
         });
       } catch (error) {
@@ -2688,6 +2724,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
   if (amount === null) {
     await ctx.reply(buildWalletNairaCustomAmountText(), {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaCustomAmountKeyboard(),
     });
     return true;
@@ -2697,6 +2734,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
   if (amountError) {
     await ctx.reply(amountError, {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaCustomAmountKeyboard(),
     });
     return true;
@@ -2706,6 +2744,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
     const orderText = await createWalletNairaOrderText(ctx.from.id, amount);
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     await ctx.reply(orderText, {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaOrderKeyboard(),
     });
   } catch (error) {
@@ -2740,6 +2779,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
     if (!Number.isFinite(amount) || amount <= 0 || !destinationAddress) {
       const balance = await getBalance(ctx.from.id);
       await ctx.reply(buildWalletWithdrawAmountText(balance), {
+        parse_mode: "HTML",
         reply_markup: buildWithdrawCancelKeyboard(),
       });
       return;
@@ -2759,7 +2799,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
       await processFantasyWalletWithdrawals();
       await ctx.reply(
         buildWalletWithdrawalRequestedText({ amount, destinationAddress }),
-        { reply_markup: buildWalletKeyboard() }
+        { parse_mode: "HTML", reply_markup: buildWalletKeyboard() }
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
@@ -2767,6 +2807,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
       if (normalized.includes("insufficient wallet balance")) {
         const balance = await getBalance(ctx.from.id);
         await ctx.reply(buildArenaInsufficientBalanceText(amount, balance), {
+          parse_mode: "HTML",
           reply_markup: buildInsufficientBalanceKeyboard(),
         });
         return;
@@ -2790,6 +2831,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
 
     if (amountError) {
       await ctx.reply(amountError, {
+        parse_mode: "HTML",
         reply_markup: buildWalletNairaPickerKeyboard(),
       });
       return;
@@ -2799,6 +2841,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
       await clearPendingFantasyCustomFundAmount(ctx.from.id);
       const orderText = await createWalletNairaOrderText(ctx.from.id, amount);
       await ctx.reply(orderText, {
+        parse_mode: "HTML",
         reply_markup: buildWalletNairaOrderKeyboard(),
       });
     } catch (error) {
@@ -2812,6 +2855,7 @@ export async function handleWallet(ctx: Context): Promise<void> {
   }
 
   await ctx.reply(buildWalletCommandHelpText(), {
+    parse_mode: "HTML",
     reply_markup: buildWalletKeyboard(),
   });
 }
@@ -2822,11 +2866,11 @@ function buildOfframpHelpText(): string {
   return [
     "💸 Offramp USDC → Naira",
     "",
-    `Minimum: ${PAJCASH_OFFRAMP_MIN_USDC} USDC`,
+    `Minimum: ${c(`${PAJCASH_OFFRAMP_MIN_USDC} USDC`)}`,
     "",
-    "Step 1 — Enter your Nigerian bank account number.",
-    "Step 2 — Confirm the account name.",
-    "Step 3 — Enter the USDC amount to convert.",
+    `Step ${c("1")} — Enter your Nigerian bank account number.`,
+    `Step ${c("2")} — Confirm the account name.`,
+    `Step ${c("3")} — Enter the USDC amount to convert.`,
     "",
     "The USDC must be in your in-bot wallet on-chain.",
     "Your balance is debited after the transfer is submitted.",
@@ -2856,12 +2900,14 @@ function buildOfframpOrderText(input: {
   return [
     "✅ Withdrawal submitted!",
     "",
-    `${formatNairaCompact(input.fiatAmount)} is on its way to your bank.`,
+    `${c(formatNairaCompact(input.fiatAmount))} is on its way to your bank.`,
     "",
-    `🏦 ${input.accountName}`,
-    `   ${input.accountNumber}  ·  ${input.bankName}`,
+    `USDC sent: ${c(formatUsdc(input.usdcAmount))}`,
+    `🏦 ${escapeHtml(input.accountName)}`,
+    `   ${c(input.accountNumber)}  ·  ${escapeHtml(input.bankName)}`,
     "",
-    `Reference: ${input.orderId}`,
+    `Reference: ${c(input.orderId)}`,
+    `Signature: ${c(input.fundingSignature)}`,
   ].join("\n");
 }
 
@@ -2880,10 +2926,10 @@ export async function handleOfframpNgn(ctx: Context): Promise<void> {
       [
         `💸 Not enough USDC to offramp.`,
         "",
-        `Minimum:         ${formatUsdc(PAJCASH_OFFRAMP_MIN_USDC)}`,
-        `Your balance:    ${formatUsdc(balance)}`,
+        `Minimum:         ${c(formatUsdc(PAJCASH_OFFRAMP_MIN_USDC))}`,
+        `Your balance:    ${c(formatUsdc(balance))}`,
       ].join("\n"),
-      { reply_markup: buildWalletKeyboard() }
+      { parse_mode: "HTML", reply_markup: buildWalletKeyboard() }
     );
     return;
   }
@@ -2895,7 +2941,7 @@ export async function handleOfframpNgn(ctx: Context): Promise<void> {
       "",
       "Enter your Nigerian bank account number:",
     ].join("\n"),
-    { reply_markup: buildOfframpCancelKeyboard() }
+    { parse_mode: "HTML", reply_markup: buildOfframpCancelKeyboard() }
   );
 }
 
@@ -2908,6 +2954,7 @@ export async function handleFundNgn(ctx: Context): Promise<void> {
 
   if (!Number.isFinite(amount) || amount <= 0) {
     await ctx.reply(buildWalletNairaHelpText(), {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaPickerKeyboard(),
     });
     return;
@@ -2917,6 +2964,7 @@ export async function handleFundNgn(ctx: Context): Promise<void> {
 
   if (amountError) {
     await ctx.reply(amountError, {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaPickerKeyboard(),
     });
     return;
@@ -2926,6 +2974,7 @@ export async function handleFundNgn(ctx: Context): Promise<void> {
     await clearPendingFantasyCustomFundAmount(ctx.from.id);
     const orderText = await createWalletNairaOrderText(ctx.from.id, amount);
     await ctx.reply(orderText, {
+      parse_mode: "HTML",
       reply_markup: buildWalletNairaOrderKeyboard(),
     });
   } catch (error) {
@@ -2950,6 +2999,7 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
     const balance = await getBalance(ctx.from.id);
     await saveWithdrawState(ctx.from.id, { step: "amount" });
     await ctx.reply(buildWalletWithdrawAmountText(balance), {
+      parse_mode: "HTML",
       reply_markup: buildWithdrawCancelKeyboard(),
     });
     return;
@@ -2973,6 +3023,7 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
         destinationAddress,
       }),
       {
+        parse_mode: "HTML",
         reply_markup: buildWalletKeyboard(),
       }
     );
@@ -2983,6 +3034,7 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
     if (normalized.includes("insufficient wallet balance")) {
       const balance = await getBalance(ctx.from.id);
       await ctx.reply(buildArenaInsufficientBalanceText(amount, balance), {
+        parse_mode: "HTML",
         reply_markup: buildInsufficientBalanceKeyboard(),
       });
       return;
@@ -2994,7 +3046,7 @@ export async function handleWithdraw(ctx: Context): Promise<void> {
 
 export async function handleHelp(ctx: Context): Promise<void> {
   if (!ctx.from) {
-    await ctx.reply(buildLeagueHelpText());
+    await ctx.reply(buildLeagueHelpText(), { parse_mode: "HTML" });
     return;
   }
 
@@ -3008,6 +3060,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
   }
 
   await ctx.reply(buildLeagueHelpText(), {
+    parse_mode: "HTML",
     ...(buildChartCommandKeyboard()
       ? { reply_markup: buildChartCommandKeyboard() }
       : {}),
@@ -3073,6 +3126,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     if (!Number.isFinite(entryFee)) {
       const balance = await getBalance(ctx.from.id);
       await ctx.reply(buildCreateArenaPickerText(balance), {
+        parse_mode: "HTML",
         reply_markup: buildCreateArenaPickerKeyboard(ctx.from.id),
       });
       return;
@@ -3086,6 +3140,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
           entryFee,
         }),
         {
+          parse_mode: "HTML",
           reply_markup: buildCreateArenaDurationKeyboard(entryFee),
         }
       );
@@ -3108,6 +3163,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
           durationHours: getGameDurationHours(game),
         }),
         {
+          parse_mode: "HTML",
           reply_markup: buildFantasyCreateSuccessKeyboard(shareUrl),
         }
       );
@@ -3160,6 +3216,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
           snapshot,
         }),
         {
+          parse_mode: "HTML",
           reply_markup: buildArenaLiveKeyboard({
             code,
             canCatchUp: Boolean(view.me && view.me.place > 1),
@@ -3222,36 +3279,37 @@ export async function handleLeague(ctx: Context): Promise<void> {
             )}%)`
           : "0/0 (0%)";
       const lastRoundText = view.lastTrade
-        ? `${view.lastTrade.direction} ${
+        ? `${escapeHtml(view.lastTrade.direction)} ${
             view.lastTrade.outcome === "WIN"
               ? "✅"
               : view.lastTrade.outcome === "LOSS"
                 ? "❌"
                 : "•"
-          }  ${view.lastTrade.outcome === "WIN" ? `+${formatMoney(view.lastTrade.payout)}` : ""}`.trim()
+          }  ${view.lastTrade.outcome === "WIN" ? c(`+${formatMoney(view.lastTrade.payout)}`) : ""}`.trim()
         : "No trades yet";
 
       await ctx.reply(
         [
-          `Arena ${view.game.code}  •  ${view.game.status.toUpperCase()}`,
+          `Arena ${c(view.game.code)}  •  ${escapeHtml(view.game.status.toUpperCase())}`,
           "",
           `Your position: ${
-            view.me ? `#${view.me.place} of ${view.memberCount}` : "Not joined"
+            view.me ? c(`#${view.me.place} of ${view.memberCount}`) : "Not joined"
           }`,
-          `Stack: ${formatWholeMoney(view.me?.virtual_balance ?? view.game.virtual_start_balance)}  (${formatSignedPercent(
+          `Stack: ${c(formatWholeMoney(view.me?.virtual_balance ?? view.game.virtual_start_balance))}  (${c(formatSignedPercent(
             view.me
               ? ((view.me.virtual_balance - view.game.virtual_start_balance) /
                   view.game.virtual_start_balance) *
                   100
               : 0
-          )})`,
-          `Rounds left: ~${view.roundsLeft}  (~${view.roundsLeft * 15} min)`,
-          `Prize if game ends now: ${formatMoney(view.prizeIfEndedNow)}`,
+          ))})`,
+          `Rounds left: ${c(`~${view.roundsLeft}  (~${view.roundsLeft * 15} min)`)}`,
+          `Prize if game ends now: ${c(formatMoney(view.prizeIfEndedNow))}`,
           "",
           `Last round: ${lastRoundText}`,
-          `Accuracy: ${accuracyText}`,
+          `Accuracy: ${c(accuracyText)}`,
         ].join("\n"),
         {
+          parse_mode: "HTML",
           reply_markup: new InlineKeyboard()
             .text("Full leaderboard", `arena:board:${view.game.code}`)
             .text("🏟 Back to lobby", ARENA_BACK_TO_LOBBY),
@@ -3264,7 +3322,7 @@ export async function handleLeague(ctx: Context): Promise<void> {
     return;
   }
 
-  await ctx.reply(buildLeagueHelpText());
+  await ctx.reply(buildLeagueHelpText(), { parse_mode: "HTML" });
 }
 
 export async function handleFantasyLeagueTrade(ctx: Context): Promise<void> {
@@ -3324,7 +3382,7 @@ export async function handleFantasyLeagueTrade(ctx: Context): Promise<void> {
     });
 
     clearFantasyTradePromptState(chatId, messageId);
-    await editTradePromptMessage(ctx, buildTradeLockedText(result), buildTradeLockedKeyboard(result.game.code));
+    await editTradePromptMessage(ctx, buildTradeLockedText(result), buildTradeLockedKeyboard(result.game.code), "HTML");
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const normalized = message.toLowerCase();
@@ -3383,7 +3441,8 @@ export async function handleFantasyJoinConfirm(ctx: Context): Promise<void> {
         roundsUntilStart: getApproxRoundsUntil(game.start_at),
         durationHours: getGameDurationHours(game),
       }),
-      buildFantasyJoinSuccessKeyboard(shareUrl)
+      buildFantasyJoinSuccessKeyboard(shareUrl),
+      "HTML"
     );
   } catch (error) {
     await replyFantasyJoinError(ctx, error, code);
@@ -3565,11 +3624,11 @@ export async function handleMarketBet(ctx: Context): Promise<void> {
   const payoutPerShare = 100;
 
   await ctx.reply(
-    `${betSide === "YES" ? "✅" : "❌"} *Bet ${betSide}* — ₦${pricePerShare}/share\n\n` +
-    `*${market.question}*\n\n` +
-    `Each share costs ₦${pricePerShare}. Win ₦${payoutPerShare} per share if correct.\n\n` +
+    `${betSide === "YES" ? "✅" : "❌"} <b>Bet ${escapeHtml(betSide)}</b> — ${c(`₦${pricePerShare}/share`)}\n\n` +
+    `<b>${escapeHtml(market.question)}</b>\n\n` +
+    `Each share costs ${c(`₦${pricePerShare}`)}. Win ${c(`₦${payoutPerShare}`)} per share if correct.\n\n` +
     `How much do you want to bet?`,
-    { parse_mode: "Markdown", reply_markup: keyboard }
+    { parse_mode: "HTML", reply_markup: keyboard }
   );
 }
 
@@ -3587,7 +3646,7 @@ export async function handleMarketBetAmount(ctx: Context): Promise<void> {
 
   if (amountStr === "custom") {
     await savePendingMarketBetCustom(ctx.from.id);
-    await ctx.reply("Enter your bet amount in naira (e.g. 2500):");
+    await ctx.reply(`Enter your bet amount in naira (e.g. ${c("2500")}):`, { parse_mode: "HTML" });
     return;
   }
 
@@ -3606,7 +3665,7 @@ export async function handleMarketBetCustom(ctx: Context): Promise<boolean> {
   const ngnAmount = Number.parseInt(text, 10);
 
   if (!Number.isFinite(ngnAmount) || ngnAmount < 500) {
-    await ctx.reply("Minimum bet is ₦500. Enter a valid amount:");
+    await ctx.reply(`Minimum bet is ${c("₦500")}. Enter a valid amount:`, { parse_mode: "HTML" });
     return true;
   }
 
@@ -3631,8 +3690,8 @@ async function placePredictionBet(ctx: Context, marketId: string, side: "YES" | 
     const odds = calcOdds(updated.yes_pool, updated.no_pool);
     const prob = side === "YES" ? odds.yes : odds.no;
     await ctx.reply(
-      `✅ Bet placed!\n\n*${side}* on "${updated.question}"\n₦${ngnAmount.toLocaleString()} (~$${usdcAmount.toFixed(2)} USDC) @ ${formatOdds(prob)}`,
-      { parse_mode: "Markdown" }
+      `✅ <b>Bet placed!</b>\n\n<b>${escapeHtml(side)}</b> on "${escapeHtml(updated.question)}"\n${c(`₦${ngnAmount.toLocaleString()}`)} (${c(`~$${usdcAmount.toFixed(2)} USDC`)}) @ ${c(formatOdds(prob))}`,
+      { parse_mode: "HTML" }
     );
   } catch (err) {
     await ctx.reply(`❌ ${err instanceof Error ? err.message : "Failed to place bet."}`);
@@ -3663,6 +3722,12 @@ function categoryEmoji(category: string): string {
   return CATEGORY_EMOJI[category.toLowerCase()] ?? "📊";
 }
 
+function normalizeCategoryKey(value: unknown): string {
+  if (typeof value !== "string") return "UNKNOWN";
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : "UNKNOWN";
+}
+
 function formatNgnPrice(price: number): string {
   return `₦${Math.round(price * 100)}`;
 }
@@ -3670,14 +3735,22 @@ function formatNgnPrice(price: number): string {
 async function getCachedBayseEvents(): Promise<BayseEvent[]> {
   try {
     const cached = await redis.get(BAYSE_MARKETS_CACHE_KEY);
-    if (cached) return JSON.parse(cached) as BayseEvent[];
+    if (cached) {
+      const parsed = JSON.parse(cached) as unknown;
+      if (Array.isArray(parsed)) return parsed as BayseEvent[];
+    }
   } catch { /* ignore */ }
 
-  const events = await listBayseEvents({ size: 50 });
+  const events = await listBayseEvents({ size: 50 }).catch((error) => {
+    console.error("[bayse] list events failed:", error);
+    return [] as BayseEvent[];
+  });
 
-  try {
-    await redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL);
-  } catch { /* ignore */ }
+  if (events.length > 0) {
+    try {
+      await redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL);
+    } catch { /* ignore */ }
+  }
 
   return events;
 }
@@ -3704,7 +3777,7 @@ function buildCategoryPickerKeyboard(): InlineKeyboard {
 // ── Step 2: Top 3 markets in category with YES/NO per market ─────────────────
 
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
-  const lines = [`${categoryEmoji(category)} *${category}*\n`];
+  const lines = [`${categoryEmoji(category)} <b>${escapeHtml(category)}</b>\n`];
   for (const e of events) {
     const m = e.markets[0]!;
     const liq = e.liquidity >= 1_000_000
@@ -3713,8 +3786,8 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
       ? `₦${Math.round(e.liquidity / 1_000)}K`
       : `₦${Math.round(e.liquidity)}`;
     lines.push(
-      `*${e.title}*`,
-      `YES ${formatNgnPrice(m.outcome1Price)}/share  ·  NO ${formatNgnPrice(m.outcome2Price)}/share  ·  ${liq} pool`,
+      `<b>${escapeHtml(e.title)}</b>`,
+      `YES ${c(`${formatNgnPrice(m.outcome1Price)}/share`)}  ·  NO ${c(`${formatNgnPrice(m.outcome2Price)}/share`)}  ·  ${c(`${liq} pool`)}`,
       ""
     );
   }
@@ -3741,14 +3814,13 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
 function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no"): string {
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
   const label = side === "yes" ? market.outcome1Label : market.outcome2Label;
-  const priceNgn = Math.round(price * 100);
   return [
-    `${side === "yes" ? "✅" : "❌"} *${label}* — ${event.title}`,
+    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(label)}</b> — ${escapeHtml(event.title)}`,
     "",
-    `Each share costs *${formatNgnPrice(price)}*`,
-    `Win *₦100* per share if correct`,
+    `Each share costs ${c(formatNgnPrice(price))}`,
+    `Win ${c("₦100")} per share if correct`,
     "",
-    `How much do you want to bet? (type any amount in Naira, e.g. *2000*)`,
+    `How much do you want to bet? (type any amount in Naira, e.g. ${c("2000")})`,
   ].join("\n");
 }
 
@@ -3765,15 +3837,15 @@ function buildReceiptText(input: {
   positionId: string;
 }): string {
   return [
-    `✅ *Order placed!*`,
+    `✅ <b>Order placed!</b>`,
     "",
-    `Market:   ${input.eventTitle}`,
-    `Side:     *${input.side.toUpperCase()}*`,
-    `Stake:    ₦${input.ngnAmount.toLocaleString()}`,
-    `Shares:   ${input.shares} @ ${formatNgnPrice(input.priceNgn / 100)}`,
-    `Payout:   ₦${input.payoutNgn.toLocaleString()} if correct`,
+    `Market:   ${escapeHtml(input.eventTitle)}`,
+    `Side:     <b>${escapeHtml(input.side.toUpperCase())}</b>`,
+    `Stake:    ${c(`₦${input.ngnAmount.toLocaleString()}`)}`,
+    `Shares:   ${c(`${input.shares} @ ${formatNgnPrice(input.priceNgn / 100)}`)}`,
+    `Payout:   ${c(`₦${input.payoutNgn.toLocaleString()}`)} if correct`,
     "",
-    `Order ID: \`${input.orderId ?? input.positionId}\``,
+    `Order ID: ${c(input.orderId ?? input.positionId)}`,
   ].join("\n");
 }
 
@@ -3833,15 +3905,15 @@ async function placeBayseMarketBet(
   const usdcAmount = ngnToUsdc(ngnAmount);
 
   if (shares < 1) {
-    await ctx.reply(`Minimum bet is ₦${Math.ceil(price * 100)} (1 share).`);
+    await ctx.reply(`Minimum bet is ${c(`₦${Math.ceil(price * 100)} (1 share)`) }.`, { parse_mode: "HTML" });
     return;
   }
 
   const balance = await getBalance(ctx.from.id);
   if (balance < usdcAmount) {
     await ctx.reply(
-      `💸 Insufficient balance.\n\nRequired: $${usdcAmount.toFixed(4)} USDC\nYour balance: $${balance.toFixed(4)} USDC`,
-      { reply_markup: buildInsufficientBalanceKeyboard() }
+      `💸 Insufficient balance.\n\nRequired: ${c(`$${usdcAmount.toFixed(4)} USDC`)}\nYour balance: ${c(`$${balance.toFixed(4)} USDC`)}`,
+      { parse_mode: "HTML", reply_markup: buildInsufficientBalanceKeyboard() }
     );
     return;
   }
@@ -3897,7 +3969,7 @@ async function placeBayseMarketBet(
     positionId: position.id,
   });
 
-  const sent = await ctx.reply(receipt, { parse_mode: "Markdown" });
+  const sent = await ctx.reply(receipt, { parse_mode: "HTML" });
 
   // Auto-delete receipt after 60s
   setTimeout(() => {
@@ -3931,12 +4003,21 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
   // ── Category selected → show top 3 markets ────────────────────────────────
   if (data.startsWith("bm:cat:")) {
-    const category = data.slice("bm:cat:".length);
+    const category = normalizeCategoryKey(data.slice("bm:cat:".length));
     try {
       const events = await getCachedBayseEvents();
+      const wantedCategory = category.toUpperCase();
       const top3 = events
-        .filter((e) => e.category.toUpperCase() === category.toUpperCase() && e.markets.length > 0)
-        .sort((a, b) => b.liquidity - a.liquidity)
+        .filter((e) =>
+          normalizeCategoryKey(e.category) === wantedCategory &&
+          Array.isArray(e.markets) &&
+          e.markets.length > 0
+        )
+        .sort(
+          (a, b) =>
+            (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
+            (Number.isFinite(a.liquidity) ? a.liquidity : 0)
+        )
         .slice(0, 3);
 
       if (top3.length === 0) {
@@ -3953,11 +4034,11 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
         ctx,
         buildCategoryMarketsText(category, top3),
         buildCategoryMarketsKeyboard(category, top3),
-        "Markdown"
+        "HTML"
       );
     } catch (err) {
       console.error("[bayse] category load failed:", err);
-      await ctx.reply(`Couldn't load markets right now. Try again.`);
+      await ctx.reply("Markets are temporarily unavailable. Please try again in a minute.");
     }
     return;
   }
@@ -3972,7 +4053,7 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
     const events = await getCachedBayseEvents().catch(() => [] as BayseEvent[]);
     const event = events.find((e) => e.id === eventId);
-    const market = event?.markets.find((m) => m.id === marketId);
+    const market = event?.markets?.find((m) => m.id === marketId);
     if (!event || !market) { await ctx.reply("Market no longer available."); return; }
 
     await saveBayseBetState(ctx.from.id, { eventId, marketId, side });
@@ -3981,8 +4062,11 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     await editTradePromptMessage(
       ctx,
       buildQuoteText(event, market, side),
-      new InlineKeyboard().text("← Back", `bm:cat:${event.category}`),
-      "Markdown"
+      new InlineKeyboard().text(
+        "← Back",
+        `bm:cat:${FIXED_CATEGORIES.includes(normalizeCategoryKey(event.category)) ? normalizeCategoryKey(event.category) : "CRYPTO"}`
+      ),
+      "HTML"
     );
     return;
   }
@@ -3996,7 +4080,7 @@ export async function handleBayseCustomBetInput(ctx: Context): Promise<boolean> 
   const ngnAmount = Number.parseInt(text, 10);
 
   if (!Number.isFinite(ngnAmount) || ngnAmount < 100) {
-    await ctx.reply("Minimum bet is ₦100. Enter a valid Naira amount:");
+    await ctx.reply(`Minimum bet is ${c("₦100")}. Enter a valid Naira amount:`, { parse_mode: "HTML" });
     return true;
   }
 

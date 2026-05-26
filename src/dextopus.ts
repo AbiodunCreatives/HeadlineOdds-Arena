@@ -17,8 +17,8 @@ export interface DextopusToken {
 }
 
 export interface DextopusQuoteRequest {
-  originChainId: number | string;
-  destinationChainId: number | string;
+  originChainId: number;
+  destinationChainId: number;
   originAsset: string;
   destinationAsset: string;
   amount: string; // smallest unit

@@ -142,7 +142,19 @@ export async function listBayseEvents(opts?: {
   if (opts?.countryCodes) params.set("countryCodes", opts.countryCodes);
 
   const data = await request<{ events?: BayseEvent[] }>("GET", `/pm/events?${params}`);
-  return (data.events ?? []).filter((e) => e.markets?.length > 0);
+  const events = Array.isArray(data.events) ? data.events : [];
+
+  return events
+    .filter((e) => Array.isArray(e?.markets) && e.markets.length > 0)
+    .map((e) => ({
+      ...e,
+      category:
+        typeof e.category === "string" && e.category.trim().length > 0
+          ? e.category
+          : "UNKNOWN",
+      liquidity: Number.isFinite(e.liquidity) ? e.liquidity : 0,
+      markets: (e.markets ?? []).filter((m) => Boolean(m?.id)),
+    }));
 }
 
 // ── Place aggregated order ────────────────────────────────────────────────────

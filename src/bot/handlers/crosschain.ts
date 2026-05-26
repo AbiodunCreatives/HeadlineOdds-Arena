@@ -46,6 +46,17 @@ function formatUsdc(value: number): string {
   return `${rounded.toLocaleString("en-US", { minimumFractionDigits, maximumFractionDigits: 6 })} USDC`;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function c(value: string | number): string {
+  return `<code>${escapeHtml(String(value))}</code>`;
+}
+
 // ── Builders ──────────────────────────────────────────────────────────────────
 
 export function buildCrossChainChainPickerText(): string {
@@ -101,8 +112,8 @@ export function buildCrossChainConfirmText(session: CrossChainSession): string {
   return [
     "🌐 Confirm Cross-Chain Deposit",
     "",
-    `Sending:  ${session.amount} ${session.tokenSymbol}`,
-    `Chain:    ${session.chainName}`,
+    `Sending:  ${c(`${session.amount} ${session.tokenSymbol}`)}`,
+    `Chain:    ${c(session.chainName)}`,
     "",
     "A deposit address will be generated. Send exactly this amount to it.",
     "USDC arrives in your in-bot wallet automatically after confirmation.",
@@ -124,11 +135,11 @@ export function buildCrossChainDepositAddressText(input: {
   return [
     "<b>CROSS-CHAIN DEPOSIT</b>",
     "",
-    `Send your ${input.originSymbol} to`,
-    `<code>${input.depositAddress}</code>`,
+    `Send your ${escapeHtml(input.originSymbol)} to`,
+    c(input.depositAddress),
     "",
-    `Expected credit  <code>~${formatUsdc(input.expectedUsdcOut)}</code>`,
-    `Expires in       ${Math.round(input.expiresInSeconds / 60)} min`,
+    `Expected credit  ${c(`~${formatUsdc(input.expectedUsdcOut)}`)}`,
+    `Expires in       ${c(`${Math.round(input.expiresInSeconds / 60)} min`)}`,
     "",
     "USDC arrives automatically once your transaction confirms.",
   ].join("\n");
@@ -156,11 +167,11 @@ export function buildCrossChainStatusText(input: {
     pending: "⏳", processing: "🔄", completed: "✅", expired: "❌", failed: "❌",
   };
   const lines = [
-    `${emoji[input.status.toLowerCase()] ?? "ℹ️"} Status: ${input.status}`,
-    `Execution: ${input.executionStatus}`,
+    `${emoji[input.status.toLowerCase()] ?? "ℹ️"} Status: ${c(input.status)}`,
+    `Execution: ${c(input.executionStatus)}`,
   ];
-  if (input.originTxs[0]) lines.push(`Origin tx: ${input.originTxs[0]}`);
-  if (input.destTxs[0]) lines.push(`Dest tx: ${input.destTxs[0]}`);
+  if (input.originTxs[0]) lines.push(`Origin tx: ${c(input.originTxs[0])}`);
+  if (input.destTxs[0]) lines.push(`Dest tx: ${c(input.destTxs[0])}`);
   return lines.join("\n");
 }
 
@@ -251,7 +262,7 @@ export async function handleCrossChainCallback(
       tokenDecimals: token.decimals,
     });
     await edit(
-      `🌐 How much ${token.symbol} are you sending?\n\nType the amount, e.g. 10`,
+      `🌐 How much ${escapeHtml(token.symbol)} are you sending?\n\nType the amount, e.g. ${c("10")}`,
       buildCrossChainAmountPromptKeyboard(),
     );
     return true;
@@ -267,7 +278,7 @@ export async function handleCrossChainCallback(
     if (session.expiresAt && session.expiresAt - Date.now() < 5 * 60 * 1000) {
       const minsLeft = Math.max(1, Math.round((session.expiresAt - Date.now()) / 60_000));
       await edit(
-        `⚠️ Your session expires in ~${minsLeft} min. Confirm now or it will reset.\n\n` +
+        `⚠️ Your session expires in ${c(`~${minsLeft} min`)}. Confirm now or it will reset.\n\n` +
         buildCrossChainConfirmText(session),
         buildCrossChainConfirmKeyboard(),
       );

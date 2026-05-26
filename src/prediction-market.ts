@@ -174,7 +174,7 @@ export async function placeBet(input: {
     referenceId: input.marketId,
     idempotencyKey: `pmbet:${input.marketId}:${input.telegramId}`,
   });
-  if (!debited) throw new Error("Could not debit balance. Please try again.");
+  if (!debited) throw new Error("Insufficient balance. Please top up your wallet.");
 
   // Record bet
   const { data: bet, error: betError } = await supabase
