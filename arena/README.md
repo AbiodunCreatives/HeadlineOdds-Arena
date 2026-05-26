@@ -1,47 +1,34 @@
-# HeadlineOdds Arena — Website
+# HeadlineOdds Arena Mini App
 
-Marketing site for [HeadlineOdds Arena](https://headlineodds.fun/arena).
+This directory is now a single-purpose Telegram mini app for live BTC arena trading.
 
-Built with Next.js (pages router), TypeScript, and plain CSS. No UI library dependencies — fully self-contained and portable.
+## Routes
 
-## Structure
+- `/` - trade mini app
+- `/trade` - trade mini app alias used by the bot
 
+Both routes render the same UI.
+
+## Required environment variable
+
+Set this in Vercel before deploying:
+
+```bash
+NEXT_PUBLIC_BOT_API_URL=https://headlineodds-arena.fly.dev
 ```
-arena/
-├── components/Layout.tsx   # Nav + footer wrapper
-├── pages/
-│   ├── _app.tsx
-│   ├── _document.tsx
-│   ├── index.tsx           # Landing page
-│   └── play.tsx            # Get started / play page
-└── styles/globals.css      # Design system (dark purple/gold)
-```
 
-## Dev
+The mini app uses that backend for `/api/trade-state`.
+
+## Local commands
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000/arena
+npm run typecheck
+npm run build
 ```
 
-## Build & Deploy
+## Deployment
 
-```bash
-npm run build      # Outputs static files to out/
-```
+Deploy `arena/` as its own Vercel project with `arena` as the root directory.
 
-The `out/` folder is a fully static export. Copy it to any host under the `/arena` path, or deploy to Vercel/Netlify.
-
-### Deploying under headlineodds.fun/arena
-
-The `basePath` in `next.config.js` is already set to `/arena`. When deploying:
-
-- **Vercel / Netlify**: deploy this folder as a separate project, set the base path in the platform settings.
-- **Static host (nginx/Caddy)**: serve the `out/` folder at `/arena`.
-- **Same repo as headlineodds.fun**: this folder is self-contained — copy or symlink `arena/` into the root website repo.
-
-## Customisation
-
-- Update the bot URL in `pages/play.tsx` (`BOT_URL` constant).
-- Swap stats in `pages/index.tsx` once you have real numbers.
-- Add `public/favicon.ico` and `public/og-image.png` for full SEO.
+After Vercel gives you the frontend URL, set `ARENA_URL` on the Fly bot so Telegram opens the mini app from the Trade button.
