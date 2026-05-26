@@ -242,6 +242,28 @@ CREATE INDEX IF NOT EXISTS idx_fantasy_pajcash_offramps_telegram_id_created_at
   ON fantasy_pajcash_onramps (telegram_id, created_at DESC)
   WHERE transaction_type = 'OFF_RAMP';
 
+-- Cached on-chain USDC balance per user based on the latest observed wallet state.
+-- For live RPC balances, use scripts/onchain-balances.ts.
+CREATE OR REPLACE VIEW fantasy_user_onchain_balances AS
+SELECT
+  u.telegram_id,
+  u.username,
+  u.wallet_balance AS internal_wallet_balance,
+  w.chain,
+  w.owner_address,
+  w.usdc_ata,
+  COALESCE(w.last_seen_usdc_balance_raw, 0) AS last_seen_usdc_balance_raw,
+  CASE
+    WHEN w.telegram_id IS NULL THEN 0::NUMERIC(20,6)
+    ELSE ROUND((w.last_seen_usdc_balance_raw::NUMERIC / 1000000), 6)
+  END AS observed_onchain_usdc,
+  w.updated_at AS onchain_balance_observed_at,
+  u.created_at AS user_created_at,
+  u.last_seen_at
+FROM fantasy_users u
+LEFT JOIN fantasy_wallets w
+  ON w.telegram_id = u.telegram_id;
+
 CREATE OR REPLACE FUNCTION create_fantasy_game_with_entry(
   p_code TEXT,
   p_creator_telegram_id BIGINT,

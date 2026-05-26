@@ -7,6 +7,7 @@ scripts/manual-usdc-transfer.ts
 *.log
 src/bot/handlers/Untitled-1.txt
 .superstack/
+.fly-config/
 codex-session.jsonl
 claude-session.jsonl
 superteam-agentic-engineering-grant-draft.md

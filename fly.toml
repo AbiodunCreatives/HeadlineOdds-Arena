@@ -1,0 +1,37 @@
+app = "headlineodds-arena"
+primary_region = "jnb"
+kill_timeout = 30
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DASHBOARD_ONLY_MODE = "false"
+  PAJCASH_ENV = "production"
+  REDIS_MODE = "redis"
+  VIRTUAL_WALLET_START_BALANCE = "0"
+  SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  SOLANA_WALLET_MONITOR_INTERVAL_MS = "60000"
+  SOLANA_WITHDRAW_MIN_AMOUNT = "1"
+  FANTASY_MONITOR_INTERVAL_MS = "60000"
+  FANTASY_SETTLEMENT_INTERVAL_MS = "60000"
+  DEXTOPUS_PARTNER_FEE_BPS = "30"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    timeout = "10s"
+    path = "/"
+    [http_service.checks.headers]
+      X-Forwarded-Proto = "https"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

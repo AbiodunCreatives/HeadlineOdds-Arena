@@ -11,6 +11,9 @@
     "typecheck": "tsc --noEmit",
     "smoke": "tsx tmp/e2e-flow-smoke.ts",
     "pajcash:session": "tsx src/pajcash-session.ts",
+    "fly:secrets:dry-run": "scripts\\fly-stage-secrets.cmd -DryRun",
+    "fly:secrets:stage": "scripts\\fly-stage-secrets.cmd",
+    "wallet:sweep:selected": "tsx scripts/sweep-selected-wallets-to-treasury.ts",
     "wallet:reconcile": "tsx tmp/reconcile-fantasy-wallets.ts",
     "wallet:reset-all": "tsx tmp/reconcile-fantasy-wallets.ts -- --reset-all"
   },

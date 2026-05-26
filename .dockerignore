@@ -1,0 +1,15 @@
+.env
+.env.*
+.git
+.gitignore
+node_modules
+dist
+tmp
+dashboard
+arena
+migrations
+.fly-config
+codex-session.jsonl
+claude-session.jsonl
+.superstack
+*.md
