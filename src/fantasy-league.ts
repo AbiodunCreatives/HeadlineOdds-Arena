@@ -324,10 +324,8 @@ function buildRoundPromptKeyboard(state: PromptState): InlineKeyboard {
 // ── Prompt text builders ──────────────────────────────────────────────────────
 
 function buildLiveRoundPromptText(state: PromptState): string {
-  const yesChance = formatRoundPromptChance(state.upPrice).padStart(3, " ");
-  const noChance = formatRoundPromptChance(state.downPrice).padStart(3, " ");
-  const yesPrice = formatRoundPromptPrice(state.upPrice).padStart(3, " ");
-  const noPrice = formatRoundPromptPrice(state.downPrice).padStart(3, " ");
+  const yesPrice = formatRoundPromptPrice(state.upPrice);
+  const noPrice = formatRoundPromptPrice(state.downPrice);
   const arenaTimeLeft = formatCompactDuration(Math.max(0, Date.parse(state.game.end_at) - Date.now()));
   const selectedPrice = state.selectedDirection === null
     ? null
@@ -336,25 +334,22 @@ function buildLiveRoundPromptText(state: PromptState): string {
     ? [
         `You picked ${state.selectedDirection === "UP" ? "⬆ YES" : "⬇ NO"} at ${formatRoundPromptPrice(selectedPrice)}¢`,
         `If correct: win ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(selectedPrice, 100))} on $100`,
-        "How many USDC do you want to play?",
+        "",
       ]
     : [];
   return [
-    "━━━━━━━━━━━━━━━━━━",
     `⚡ ROUND ${state.roundNumber}  •  LIVE`,
-    "━━━━━━━━━━━━━━━━━━",
-    buildLiveRoundQuestion(state.referencePrice),
     "",
-    `Current BTC: ${formatLiveRoundPromptBtcPrice(state.currentPrice)}`,
+    `Will Bitcoin be above ${formatLiveRoundPromptBtcPrice(state.referencePrice)} in the next 15 mins?`,
     "",
-    `⬆ YES   ${yesChance}%   ${yesPrice}¢   wins ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(state.upPrice, 100))} on $100`,
-    `⬇ NO    ${noChance}%   ${noPrice}¢   wins ${formatLiveRoundPromptSignedMoney(getFantasyProjectedProfit(state.downPrice, 100))} on $100`,
+    `Current price:  ${formatLiveRoundPromptBtcPrice(state.currentPrice)}`,
+    `Target price:   ${formatLiveRoundPromptBtcPrice(state.referencePrice)}`,
     "",
+    `⬆ YES  ${yesPrice}¢   ⬇ NO  ${noPrice}¢`,
+    ...(stageLines.length > 0 ? ["", ...stageLines] : [""]),
     "━━━━━━━━━━━━━━━━━━",
     `🏆 Rank #${state.rank}  •  Stack ${formatWholeMoney(state.virtualBalance)} (${formatRoundPromptBalanceDelta(state.game, state.virtualBalance)}%)`,
-    `💰 Prize now: ${formatMoney(getProjectedPrizeForRank(state.rank, state.memberCount, state.game.prize_pool))}`,
     `⏱ Round: ${formatRoundCountdown(state.closingDate)}  •  Arena: ${arenaTimeLeft}`,
-    ...(stageLines.length > 0 ? ["", ...stageLines] : []),
   ].join("\n");
 }
 
