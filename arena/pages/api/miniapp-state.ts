@@ -61,6 +61,15 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
+function parseProbability(value: unknown): number | null {
+  const parsed = parseNumber(value);
+  if (parsed === null || parsed <= 0 || parsed > 1) {
+    return null;
+  }
+
+  return parsed;
+}
+
 function deriveOpeningDate(event: BayseEventRaw): string {
   if (typeof event.openingDate === 'string' && event.openingDate.trim()) {
     return event.openingDate;
@@ -166,7 +175,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const [openPayload, resolvedPayload, currentPrice, overlay] = await Promise.all([
       fetchJson<BayseEventsResponse>(
-        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&size=1&limit=1&status=open`
+        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&limit=1&status=open`
       ),
       fetchJson<BayseEventsResponse>(
         `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&size=5&limit=5&status=resolved`
@@ -193,10 +202,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       eventThreshold: parseNumber(currentEvent.eventThreshold),
       pctElapsed,
       status: 'live' as const,
-      upPrice: parseNumber(
+      upPrice: parseProbability(
         currentMarket?.outcome1Price ?? currentMarket?.yesBuyPrice ?? null
       ),
-      downPrice: parseNumber(
+      downPrice: parseProbability(
         currentMarket?.outcome2Price ?? currentMarket?.noBuyPrice ?? null
       ),
       marketId: currentMarket?.id ?? null,
