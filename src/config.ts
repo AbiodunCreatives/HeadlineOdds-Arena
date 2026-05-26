@@ -109,11 +109,16 @@ const envSchema = z.object({
     .positive()
     .default(60_000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  GROQ_API_KEY: optionalString,
   DEXTOPUS_API_KEY: optionalString,
   DEXTOPUS_PARTNER_FEE_RECIPIENT: optionalString,
   DEXTOPUS_PARTNER_FEE_BPS: z.coerce.number().int().nonnegative().default(0),
+  BAYSE_PUBLIC_KEY: optionalString,
+  BAYSE_SECRET_KEY: optionalString,
   // Comma-separated Telegram IDs allowed to use the bot. Empty = open to all.
   TESTER_ALLOWLIST: optionalString,
+  // Deployed URL of the arena Next.js app (e.g. https://headlineodds.com/arena)
+  ARENA_URL: optionalString,
 });
 
 const parsed = envSchema.safeParse(process.env);

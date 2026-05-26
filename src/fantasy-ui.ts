@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 
 import type { FantasyGame, FantasyLeaderboardEntry } from "./db/fantasy.ts";
 
-export const ARENA_ENTRY_FEE_OPTIONS = [1, 2, 5, 10] as const;
+export const ARENA_ENTRY_FEE_OPTIONS = [0.5, 1, 2, 5, 10] as const;
 export const ARENA_DURATION_HOURS_OPTIONS = [1, 3, 9, 12, 24] as const;
 export const BAYSE_ROUNDS_PER_HOUR = 4;
 const HOUR_MS = 60 * 60 * 1000;
@@ -103,10 +103,15 @@ export function getVirtualReturnPct(
 
 export function anonymizePlayer(
   telegramId: number,
-  viewerTelegramId?: number
+  viewerTelegramId?: number,
+  username?: string | null
 ): string {
   if (viewerTelegramId !== undefined && telegramId === viewerTelegramId) {
     return "you";
+  }
+
+  if (username?.trim()) {
+    return username.trim();
   }
 
   const digest = createHash("sha256")

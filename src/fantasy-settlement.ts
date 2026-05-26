@@ -6,7 +6,7 @@ import {
   sendFantasyRoundReengagements,
   sendFantasyStartingSoonPings,
   settleFantasyLeagueTrades,
-} from "./fantasy-league.ts";
+} from "./fantasy-round.ts";
 import { getDelayUntilNextAlignedTick } from "./utils/aligned-interval.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
 

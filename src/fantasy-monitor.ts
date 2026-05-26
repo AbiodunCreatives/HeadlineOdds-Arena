@@ -1,6 +1,7 @@
 import { getCurrentRoundSnapshot } from "./bayse-market.ts";
 import { config } from "./config.ts";
-import { FANTASY_ASSET, processFantasyLeagueRound } from "./fantasy-league.ts";
+import { FANTASY_ASSET } from "./fantasy-league.ts";
+import { processFantasyLeagueRound } from "./fantasy-round.ts";
 import { getDelayUntilNextAlignedTick } from "./utils/aligned-interval.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
 

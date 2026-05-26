@@ -1,6 +1,11 @@
+import { generateText, tool, stepCountIs, type ModelMessage } from "ai";
 import { createGroq } from "@ai-sdk/groq";
-import { generateText } from "ai";
+import { z } from "zod";
 
+import { getBalance } from "../../db/balances.ts";
+import { supabase } from "../../db/client.ts";
+import { getFantasyWalletByTelegramId } from "../../db/wallets.ts";
+import { config } from "../../config.ts";
 import { redis } from "../../utils/rateLimit.ts";
 
 const SYSTEM_PROMPT = `You are Hedi, the official HeadlineOdds Arena support assistant — a friendly, helpful, and knowledgeable agent built directly into the bot. You help users understand, join, and win in HeadlineOdds Arena.
@@ -12,7 +17,25 @@ Your name is Hedi. Only introduce yourself when directly asked who you are or wh
 PRODUCT KNOWLEDGE BASE:
 
 **What is HeadlineOdds Arena?**
-HeadlineOdds Arena is a fantasy BTC trading game on Telegram. You pay a small entry fee, get virtual funds to trade with, and compete against other players over 24 hours trading 15-minute BTC price markets. The player with the highest virtual bankroll at the end wins real USDC from the prize pool. Think of it like fantasy football but for crypto markets.
+HeadlineOdds Arena is a fantasy BTC trading game on Telegram. You can start with a free trial arena (no deposit needed) or pay an entry fee for real money arenas. You get virtual funds to trade with and compete against other players and AI bots over 1-24 hours trading 15-minute BTC price markets. The player with the highest virtual bankroll at the end wins real USDC from the prize pool. Think of it like fantasy football but for crypto markets.
+
+**Can I try it for free before depositing money?**
+Yes! Every new user gets one free trial arena. No deposit required — just tap "Free Trial" in the bot. You get $1,000 virtual funds to trade for 1 hour against 10 AI bots with different strategies. It's the perfect way to learn how the game works before playing with real money.
+
+**What are the AI bots and how do they trade?**
+The AI bots are automated players with distinct trading personalities. There are 10 different bots: Phiona 🔥 (aggressive), Danfo_Dave 🛡 (conservative), Fave 🎲 (random), Mallam_Odds 📈 (trend-following), Alhaji_Pump ↩️ (contrarian), Razor 🔪 (scalper), Bullet 🚀 (momentum-only), Bouncer 🏀 (mean-revert), Bookman 📖 (odds-follower), and Zen 🧘 (balanced). They analyze market signals and make trades automatically each round, giving you consistent competition.
+
+**Do the AI bots have an unfair advantage?**
+No. The AI bots use the same market data you see and make the same YES/NO decisions you do. They follow programmed strategies but can't predict the future any better than humans. In fact, human players often outperform the bots because you can adapt and use intuition while the bots stick to their rigid strategies.
+
+**What happens after I complete my free trial?**
+You earn 50 HLO points for completing your first arena, regardless of your ranking. These points unlock future features and rewards. You can then join real money arenas starting at just $0.50 entry fee to compete for actual USDC prizes.
+
+**How long do arenas last?**
+Free trial arenas last 1 hour with 4 trading rounds. Real money arenas last 24 hours with roughly 96 trading rounds. You can check the exact duration when creating or joining an arena.
+
+**Can I create my own arena with friends?**
+Yes! Use /league create [fee] to create an arena with any entry fee from $0.50 to $50. Share the arena code with friends so they can join. You can also join free trial arenas that other players create — no deposit needed.
 
 **Do I need to know about crypto to play?**
 No. You do not need any crypto knowledge to get started. You deposit naira from your Nigerian bank account, the bot handles everything else. The only decision you make each round is whether BTC will go UP or DOWN in the next 15 minutes — anyone can do that.
@@ -75,12 +98,12 @@ Your USDC is held in your individual Solana wallet on the blockchain, not inside
 
 COMMANDS REFERENCE:
 /start — open the bot and see your balance
-/league — browse and manage arenas
+/league — browse and manage arenas (includes free trial option)
 /league create [fee] — create a new arena e.g. /league create 5
-/league join [code] — join an arena with a code
+/league join [code] — join an arena with a code (works for free trials too)
 /league board [code] — see the leaderboard for an arena
 /wallet — see your USDC wallet address and balance
-/fundngn — deposit naira via Paj Cash
+/fundngn — deposit naira via Paj Cash (not needed for free trial)
 /offrampngn — withdraw winnings to your Nigerian bank account
 /withdraw — withdraw USDC to any Solana wallet
 /chart — open the live BTC price chart
@@ -99,6 +122,8 @@ const FALLBACK = "I'm having trouble right now. Please try again or contact @bio
 const RATE_LIMIT_MSG = "You're on a roll! 😄 Take a short break and come back in an hour, or reach @bioduncrypt directly.";
 const RATE_LIMIT = 20;
 const RATE_TTL = 3600;
+const HISTORY_TTL = 7200;
+const HISTORY_MAX = 20; // 10 pairs
 
 async function checkSupportRateLimit(telegramId: number): Promise<boolean> {
   const key = `support:ratelimit:${telegramId}`;
@@ -107,8 +132,153 @@ async function checkSupportRateLimit(telegramId: number): Promise<boolean> {
     if (count === 1) await redis.expire(key, RATE_TTL);
     return count <= RATE_LIMIT;
   } catch {
-    return true; // fail open on Redis error
+    return true;
   }
+}
+
+async function loadHistory(telegramId: number): Promise<ModelMessage[]> {
+  try {
+    const raw = await redis.get(`support:history:${telegramId}`);
+    return raw ? (JSON.parse(raw) as ModelMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(telegramId: number, messages: ModelMessage[]): Promise<void> {
+  try {
+    const trimmed = messages.slice(-HISTORY_MAX);
+    await redis.set(`support:history:${telegramId}`, JSON.stringify(trimmed), "EX", HISTORY_TTL);
+  } catch {
+    // fail silently
+  }
+}
+
+function buildTools(telegramId: number) {
+  return {
+    getBalance: tool({
+      description: "Get the user's current USDC wallet balance in the bot",
+      inputSchema: z.object({ _: z.string().optional() }),
+      execute: async () => {
+        const balance = await getBalance(telegramId);
+        return { balance_usdc: balance };
+      },
+    }),
+
+    getWalletAddress: tool({
+      description: "Get the user's Solana wallet address and USDC token account",
+      inputSchema: z.object({ _: z.string().optional() }),
+      execute: async () => {
+        const w = await getFantasyWalletByTelegramId(telegramId);
+        if (!w) return { error: "No wallet found" };
+        return { owner_address: w.owner_address, usdc_ata: w.usdc_ata };
+      },
+    }),
+
+    getActiveArenas: tool({
+      description: "Get arenas the user is currently a member of (open or active)",
+      inputSchema: z.object({ _: z.string().optional() }),
+      execute: async () => {
+        const { data } = await supabase
+          .from("fantasy_game_members")
+          .select("game_id, virtual_balance, wins, losses, fantasy_games(code, status, entry_fee, prize_pool, end_at)")
+          .eq("telegram_id", telegramId);
+        return (data ?? [])
+          .filter((r: any) => ["open", "active"].includes(r.fantasy_games?.status))
+          .map((r: any) => ({
+            code: r.fantasy_games?.code,
+            status: r.fantasy_games?.status,
+            entry_fee: r.fantasy_games?.entry_fee,
+            prize_pool: r.fantasy_games?.prize_pool,
+            end_at: r.fantasy_games?.end_at,
+            my_virtual_balance: r.virtual_balance,
+            my_wins: r.wins,
+            my_losses: r.losses,
+          }));
+      },
+    }),
+
+    getArenaLeaderboard: tool({
+      description: "Get the top 10 leaderboard for a specific arena by its code",
+      inputSchema: z.object({ code: z.string().describe("The arena code e.g. ABC123") }),
+      execute: async ({ code }) => {
+        const { data: game } = await supabase
+          .from("fantasy_games")
+          .select("id")
+          .eq("code", code.toUpperCase())
+          .maybeSingle();
+        if (!game) return { error: "Arena not found" };
+        const { data } = await supabase
+          .from("fantasy_game_members")
+          .select("telegram_id, username, virtual_balance, wins, losses")
+          .eq("game_id", game.id)
+          .order("virtual_balance", { ascending: false })
+          .limit(10);
+        return (data ?? []).map((r: any, i: number) => ({
+          rank: i + 1,
+          username: r.username ?? `user_${r.telegram_id}`,
+          virtual_balance: r.virtual_balance,
+          wins: r.wins,
+          losses: r.losses,
+        }));
+      },
+    }),
+
+    getRecentTrades: tool({
+      description: "Get the user's last 5 trades in a specific arena",
+      inputSchema: z.object({ code: z.string().describe("The arena code") }),
+      execute: async ({ code }) => {
+        const { data: game } = await supabase
+          .from("fantasy_games")
+          .select("id")
+          .eq("code", code.toUpperCase())
+          .maybeSingle();
+        if (!game) return { error: "Arena not found" };
+        const { data } = await supabase
+          .from("fantasy_trades")
+          .select("direction, stake, outcome, payout, created_at")
+          .eq("telegram_id", telegramId)
+          .eq("game_id", game.id)
+          .order("created_at", { ascending: false })
+          .limit(5);
+        return (data ?? []).map((r: any) => ({
+          direction: r.direction,
+          stake: r.stake,
+          outcome: r.outcome,
+          pnl: r.outcome === "WIN" ? r.payout - r.stake : r.outcome === "LOSS" ? -r.stake : 0,
+          created_at: r.created_at,
+        }));
+      },
+    }),
+
+    getDepositHistory: tool({
+      description: "Get the user's last 5 USDC deposits",
+      inputSchema: z.object({ _: z.string().optional() }),
+      execute: async () => {
+        const { data } = await supabase
+          .from("fantasy_wallet_deposits")
+          .select("amount, created_at")
+          .eq("telegram_id", telegramId)
+          .order("created_at", { ascending: false })
+          .limit(5);
+        return data ?? [];
+      },
+    }),
+
+    getWithdrawalHistory: tool({
+      description: "Get the user's last 5 withdrawal requests",
+      inputSchema: z.object({ _: z.string().optional() }),
+      execute: async () => {
+        const { data } = await supabase
+          .from("fantasy_wallet_withdrawals")
+          .select("amount, status, requested_at")
+          .eq("telegram_id", telegramId)
+          .order("requested_at", { ascending: false })
+          .limit(5);
+        return data ?? [];
+      },
+    }),
+  };
 }
 
 export async function handleSupportQuestion(
@@ -118,21 +288,29 @@ export async function handleSupportQuestion(
   const allowed = await checkSupportRateLimit(telegramId);
   if (!allowed) return RATE_LIMIT_MSG;
 
-  const apiKey = process.env["GROQ_API_KEY"];
+  const apiKey = config.GROQ_API_KEY;
   if (!apiKey) return FALLBACK;
 
   try {
+    const history = await loadHistory(telegramId);
+    const messages: ModelMessage[] = [...history, { role: "user", content: question }];
+
     const groq = createGroq({ apiKey });
     const { text } = await generateText({
       model: groq("llama-3.3-70b-versatile"),
       system: SYSTEM_PROMPT,
-      prompt: question,
+      messages,
+      tools: buildTools(telegramId),
+      stopWhen: stepCountIs(5),
       maxOutputTokens: 300,
-      abortSignal: AbortSignal.timeout(10_000),
+
     });
-    return text.trim() || FALLBACK;
+
+    const reply = text.trim() || FALLBACK;
+    await saveHistory(telegramId, [...messages, { role: "assistant", content: reply }]);
+    return reply;
   } catch (error) {
-    console.error("[support] Groq error:", error instanceof Error ? error.message : String(error));
+    console.error("[support] error:", error instanceof Error ? error.message : String(error));
     return FALLBACK;
   }
 }

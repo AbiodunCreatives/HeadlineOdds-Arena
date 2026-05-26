@@ -706,7 +706,7 @@ export async function createCrossChainDeposit(
       : undefined;
 
   const quote = await createDextopusDeposit({
-    originChainId: req.originChainId,
+    originChainId: Number(req.originChainId),
     destinationChainId: 792703809, // Solana mainnet chain ID used by Dextopus
     originAsset: req.originAsset,
     destinationAsset: config.SOLANA_USDC_MINT,

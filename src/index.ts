@@ -5,7 +5,7 @@ import express from "express";
 import { Bot, type Context } from "grammy";
 
 import { registerAdminDashboard } from "./admin-dashboard.ts";
-import { getBtcChartMenuUrl, registerBtcChartMenuPage } from "./btc-chart-menu.ts";
+import { registerBtcChartMenuPage } from "./btc-chart-menu.ts";
 import {
   handleBoard,
   handleChart,
@@ -26,6 +26,14 @@ import {
   handleWithdraw,
   handleWallet,
   handleAdminWithdraw,
+  handleCreateMarket,
+  handleResolveMarket,
+  handleMarketBet,
+  handleMarketBetAmount,
+  handleMarketBetCustom,
+  handleMarkets,
+  handleMarketsCallback,
+  handleBayseCustomBetInput,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -39,10 +47,19 @@ import {
   stopFantasySettlementMonitor,
 } from "./fantasy-settlement.ts";
 import {
+  startBayseSettlementMonitor,
+  stopBayseSettlementMonitor,
+} from "./bayse-settlement.ts";
+import {
   startSolanaWalletMonitor,
   stopSolanaWalletMonitor,
 } from "./solana-wallet-monitor.ts";
 import { redis } from "./utils/rateLimit.ts";
+import { getCurrentRoundSnapshot } from "./bayse-market.ts";
+import { getFantasyLeagueStatusView } from "./fantasy-game.ts";
+import { getLatestFantasyTradeForMember } from "./db/fantasy.ts";
+import { saveFantasyTradeReference } from "./fantasy-state.ts";
+import { placeFantasyTradeFromCallbackData } from "./fantasy-league.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
 
 const bot = new Bot(config.BOT_TOKEN);
@@ -119,17 +136,26 @@ bot.command("wallet", wrap(handleWallet));
 bot.command("fundngn", wrap(handleFundNgn));
 bot.command("offrampngn", wrap(handleOfframpNgn));
 bot.command("withdraw", wrap(handleWithdraw));
-  bot.command("adminwithdraw", wrap(handleAdminWithdraw));
+bot.command("adminwithdraw", wrap(handleAdminWithdraw));
+bot.command("createmarket", wrap(handleCreateMarket));
+bot.command("resolvemarket", wrap(handleResolveMarket));
+bot.command("markets", wrap(handleMarkets));
+bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
+bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
+bot.callbackQuery(/^bm:/, wrap(handleMarketsCallback));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
-bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp):/, wrap(handleFantasyLeagueUiAction));
+bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
 bot.callbackQuery("fantasy:join:decline", wrap(handleFantasyJoinDecline));
 bot.on("message:text", async (ctx, next) => {
   const handled = await handleFantasyTextInput(ctx);
+  if (handled) return;
 
-  if (handled) {
-    return;
-  }
+  // Prediction market custom bet amount
+  if (await handleMarketBetCustom(ctx)) return;
+
+  // Bayse market custom bet amount
+  if (await handleBayseCustomBetInput(ctx)) return;
 
   // Plain-text messages that aren't commands or handled inputs go to support agent
   const text = ctx.message?.text ?? "";
@@ -145,6 +171,25 @@ bot.on("message:text", async (ctx, next) => {
 
   await next();
 });
+
+bot.on("message:web_app_data", wrap(async (ctx) => {
+  if (!ctx.from) return;
+  const raw = ctx.message?.web_app_data?.data ?? "";
+  let payload: { action?: string; direction?: string; amount?: number; ref?: string };
+  try { payload = JSON.parse(raw); } catch { return; }
+  if (payload.action !== "trade" || !payload.direction || !payload.amount || !payload.ref) return;
+
+  const callbackData = `flt:d:${payload.amount}:${payload.direction}:r:${payload.ref}`;
+  try {
+    const result = await placeFantasyTradeFromCallbackData({ telegramId: ctx.from.id, callbackData });
+    await ctx.reply(
+      `✅ Trade placed! ${result.direction === "UP" ? "↑ YES" : "↓ NO"} · ${result.stake} USDC · Round #${result.roundNumber}\nBalance: $${result.remainingBalance.toFixed(2)}`,
+      { parse_mode: undefined }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ ${err instanceof Error ? err.message : "Trade failed. Please try again."}`);
+  }
+}));
 
 bot.catch((error) => {
   console.error(
@@ -266,6 +311,72 @@ app.get("/health", healthRateLimit, async (req, res) => {
   });
 });
 
+app.get("/api/trade-state", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const tgId = Number(req.query["tgId"]);
+  const code = String(req.query["code"] ?? "").trim().toUpperCase();
+  if (!tgId || !code) { res.status(400).json({ error: "tgId and code required" }); return; }
+
+  try {
+    const [view, snapshot] = await Promise.all([
+      getFantasyLeagueStatusView(tgId, code),
+      getCurrentRoundSnapshot("BTC"),
+    ]);
+
+    const me = view.me;
+    if (!me) { res.status(403).json({ error: "Not a member of this arena" }); return; }
+
+    const pricing = snapshot?.pricing ?? null;
+    const round = snapshot?.round ?? null;
+    const roundOpenMs = round ? Date.parse(round.openingDate) : null;
+    const roundCloseMs = round ? Date.parse(round.closingDate) : null;
+    const tradeWindowOpen = roundOpenMs !== null && roundCloseMs !== null
+      ? Date.now() < roundOpenMs + (roundCloseMs - roundOpenMs) * 0.2
+      : false;
+
+    const lastTrade = await getLatestFantasyTradeForMember(view.game.id, tgId);
+    const lockedThisRound = lastTrade && round
+      ? lastTrade.event_id === round.eventId
+      : false;
+
+    let ref = "";
+    if (tradeWindowOpen && !lockedThisRound && pricing && round) {
+      const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+      const currentPrice = await getRoundCurrentPrice(pricing);
+      ref = await saveFantasyTradeReference({
+        gameId: view.game.id, eventId: round.eventId, marketId: pricing.marketId,
+        openingDate: round.openingDate, closingDate: round.closingDate,
+        currentPrice, referencePrice: pricing.eventThreshold,
+        upPrice: pricing.upPrice, downPrice: pricing.downPrice,
+        upOutcomeId: pricing.upOutcomeId, downOutcomeId: pricing.downOutcomeId,
+      });
+    }
+
+    res.json({
+      gameCode: view.game.code,
+      roundNumber: view.roundsPlayed + 1,
+      btcPrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
+      referencePrice: pricing?.eventThreshold ?? round?.eventThreshold ?? null,
+      upPrice: pricing?.upPrice ?? 0.5,
+      downPrice: pricing?.downPrice ?? 0.5,
+      roundClosingDate: round?.closingDate ?? null,
+      arenaEndAt: view.game.end_at,
+      virtualBalance: me.virtual_balance,
+      virtualStartBalance: view.game.virtual_start_balance,
+      place: me.place,
+      memberCount: view.memberCount,
+      prizeIfEndedNow: view.prizeIfEndedNow,
+      tradeWindowOpen,
+      lockedDirection: lockedThisRound ? lastTrade!.direction : null,
+      lockedAmount: lockedThisRound ? lastTrade!.stake : null,
+      ref,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Internal error";
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.post("/webhook/pajcash/:secret", pajcashWebhookRateLimit, async (req, res) => {
   const configuredSecret = config.PAJCASH_WEBHOOK_PATH_SECRET?.trim() ?? "";
 
@@ -346,6 +457,7 @@ async function shutdown(signal: string): Promise<void> {
 
   stopFantasyMonitor();
   stopFantasySettlementMonitor();
+  stopBayseSettlementMonitor();
   stopSolanaWalletMonitor();
 
   await new Promise<void>((resolve) => {
@@ -444,17 +556,21 @@ async function main(): Promise<void> {
       command: "withdraw",
       description: "Withdraw USDC to a Solana wallet",
     },
+    {
+      command: "markets",
+      description: "Browse live prediction markets",
+    },
   ]);
 
-  const chartMenuUrl = getBtcChartMenuUrl();
+  const tradeMenuUrl = config.ARENA_URL ? `${config.ARENA_URL}/trade` : null;
 
-  if (chartMenuUrl) {
+  if (tradeMenuUrl) {
     await bot.api.setChatMenuButton({
       menu_button: {
         type: "web_app",
-        text: "BTC Chart",
+        text: "Trade",
         web_app: {
-          url: chartMenuUrl,
+          url: tradeMenuUrl,
         },
       },
     });
@@ -469,6 +585,7 @@ async function main(): Promise<void> {
   startFantasyMonitor();
   startFantasySettlementMonitor();
   startSolanaWalletMonitor();
+  startBayseSettlementMonitor();
 
   if (config.WEBHOOK_URL) {
     const webhookUrl = `${config.WEBHOOK_URL}/webhook/${config.WEBHOOK_PATH_SECRET}`;

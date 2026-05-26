@@ -5,6 +5,8 @@
   "description": "Standalone Telegram fantasy bot extracted from edgetrader-bot",
   "main": "src/index.ts",
   "scripts": {
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsc",
@@ -36,8 +38,12 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.3",
-    "typescript": "^5.9.3"
+    "eslint": "^9.39.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.4",
+    "vitest": "^4.1.7"
   }
 }
