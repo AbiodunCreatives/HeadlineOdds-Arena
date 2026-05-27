@@ -3758,12 +3758,11 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
 // ── Step 1: Category picker ───────────────────────────────────────────────────
 
 function buildCategoryPickerText(): string {
-  return "📊 *Markets*\n\nPick a category:";
+  return "📊 <b>Markets</b>  ·  Pick a category:";
 }
 
 function buildCategoryPickerKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
-  // 3x2 grid
   kb.text(`${categoryEmoji("crypto")} Crypto`, "bm:cat:CRYPTO")
     .text(`${categoryEmoji("politics")} Politics`, "bm:cat:POLITICS")
     .text(`${categoryEmoji("sports")} Sports`, "bm:cat:SPORTS")
@@ -3774,55 +3773,88 @@ function buildCategoryPickerKeyboard(): InlineKeyboard {
   return kb;
 }
 
-// ── Step 2: Top 3 markets in category with YES/NO per market ─────────────────
+// ── Step 2: Top 3 markets ─────────────────────────────────────────────────────
+
+/**
+ * Reframes a vague question by injecting the top candidate/team name.
+ * "Who wins the 2027 Election?" + "Peter Obi" → "Will Peter Obi win the 2027 Election?"
+ * If outcome1Label is already "Yes"/"No" or blank, returns the original title unchanged.
+ */
+function reframeTitleWithCandidate(title: string, outcome1Label: string): string {
+  const label = outcome1Label.trim();
+  // Skip generic binary labels
+  if (!label || /^(yes|no|true|false)$/i.test(label)) return title;
+
+  // Already starts with the candidate name — don't double-inject
+  if (title.toLowerCase().includes(label.toLowerCase())) return title;
+
+  // Strip leading "Who " / "Which " question words and reframe
+  const stripped = title
+    .replace(/^who\s+(will\s+)?(win|be|become|get|take|lead|win\s+the)?/i, "")
+    .replace(/^which\s+(team|country|player|candidate|party)\s+(will\s+)?/i, "")
+    .trim();
+
+  // Build "Will [Name] [rest]?" — capitalise first letter of rest
+  const rest = stripped.replace(/\?$/, "").trim();
+  const restLower = rest.charAt(0).toLowerCase() + rest.slice(1);
+  return `Will ${label} ${restLower}?`;
+}
 
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
-  const lines = [`${categoryEmoji(category)} <b>${escapeHtml(category)}</b>\n`];
-  for (const e of events) {
+  const lines = [`${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets\n`];
+
+  events.forEach((e, i) => {
     const m = e.markets[0]!;
+    const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
     const liq = e.liquidity >= 1_000_000
       ? `₦${(e.liquidity / 1_000_000).toFixed(1)}M`
       : e.liquidity >= 1_000
       ? `₦${Math.round(e.liquidity / 1_000)}K`
       : `₦${Math.round(e.liquidity)}`;
+
     lines.push(
-      `<b>${escapeHtml(e.title)}</b>`,
-      `YES ${c(`${formatNgnPrice(m.outcome1Price)}/share`)}  ·  NO ${c(`${formatNgnPrice(m.outcome2Price)}/share`)}  ·  ${c(`${liq} pool`)}`,
+      `<b>${i + 1}. ${escapeHtml(reframed)}</b>`,
+      `YES ${c(formatNgnPrice(m.outcome1Price))}  ·  NO ${c(formatNgnPrice(m.outcome2Price))}  ·  ${c(liq)} pool`,
       ""
     );
-  }
+  });
+
   return lines.join("\n").trim();
 }
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (const e of events) {
+
+  events.forEach((e, i) => {
     const m = e.markets[0]!;
-    const label = e.title.length > 22 ? e.title.slice(0, 20) + "…" : e.title;
-    // Store full IDs in Redis; use short 8-char key in button data to stay under 64-byte limit
+    const n = i + 1;
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`✅ YES — ${label}`, `bm:bet:yes:${shortKey}`)
-      .row()
-      .text(`❌ NO  — ${label}`, `bm:bet:no:${shortKey}`)
+
+    kb.text(`${n} · YES ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`${n} · NO ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
-  }
+  });
+
   kb.text("← Categories", "bm:list");
   return kb;
 }
 
-// ── Step 3: Quote screen (after YES/NO tap) ───────────────────────────────────
+// ── Step 3: Quote screen ──────────────────────────────────────────────────────
 
 function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no"): string {
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
-  const label = side === "yes" ? market.outcome1Label : market.outcome2Label;
+  const reframed = reframeTitleWithCandidate(event.title, market.outcome1Label);
+  const sideLabel = side === "yes" ? "YES" : "NO";
+  const minBet = Math.ceil(price * 100);
   return [
-    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(label)}</b> — ${escapeHtml(event.title)}`,
+    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(reframed)}</b>`,
     "",
-    `Each share costs ${c(formatNgnPrice(price))}`,
+    `Buying <b>${sideLabel}</b> at ${c(formatNgnPrice(price))}/share`,
     `Win ${c("₦100")} per share if correct`,
     "",
-    `How much do you want to bet? (type any amount in Naira, e.g. ${c("2000")})`,
+    `How much? Type a Naira amount (min ${c(`₦${minBet}`)})`,
+    `e.g. ${c("2000")} → ${Math.floor(2000 / (price * 100))} shares → win ${c(`₦${Math.floor(2000 / (price * 100)) * 100}`)}`,
   ].join("\n");
 }
 
@@ -3983,14 +4015,29 @@ async function placeBayseMarketBet(
 
 export async function handleMarkets(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+
+  const msgKey = `bayse:markets:msg:${ctx.from.id}`;
+  const stored = await redis.get(msgKey).catch(() => null);
+
+  if (stored) {
+    const { chatId, messageId } = JSON.parse(stored) as { chatId: number; messageId: number };
+    try {
+      await ctx.api.editMessageText(chatId, messageId, buildCategoryPickerText(), {
+        parse_mode: "HTML",
+        reply_markup: buildCategoryPickerKeyboard(),
+      });
+      return;
+    } catch {
+      // Message too old or deleted — fall through to send a new one
+    }
+  }
+
   const sent = await ctx.reply(buildCategoryPickerText(), {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     reply_markup: buildCategoryPickerKeyboard(),
   });
-  // Auto-delete if user doesn't interact
-  setTimeout(() => {
-    ctx.api.deleteMessage(sent.chat.id, sent.message_id).catch(() => null);
-  }, MARKETS_AUTO_DELETE_MS);
+
+  await redis.set(msgKey, JSON.stringify({ chatId: sent.chat.id, messageId: sent.message_id }), "EX", 3600).catch(() => null);
 }
 
 export async function handleMarketsCallback(ctx: Context): Promise<void> {
@@ -3999,7 +4046,7 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
   // ── Category picker (back) ────────────────────────────────────────────────
   if (data === "bm:list") {
-    await editTradePromptMessage(ctx, buildCategoryPickerText(), buildCategoryPickerKeyboard(), "Markdown");
+    await editTradePromptMessage(ctx, buildCategoryPickerText(), buildCategoryPickerKeyboard(), "HTML");
     return;
   }
 
