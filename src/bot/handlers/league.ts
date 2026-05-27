@@ -3798,11 +3798,13 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
   const kb = new InlineKeyboard();
   for (const e of events) {
     const m = e.markets[0]!;
-    // Truncate title to fit button (max ~20 chars)
     const label = e.title.length > 22 ? e.title.slice(0, 20) + "…" : e.title;
-    kb.text(`✅ YES — ${label}`, `bm:bet:yes:${e.id}:${m.id}`)
+    // Store full IDs in Redis; use short 8-char key in button data to stay under 64-byte limit
+    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+    kb.text(`✅ YES — ${label}`, `bm:bet:yes:${shortKey}`)
       .row()
-      .text(`❌ NO  — ${label}`, `bm:bet:no:${e.id}:${m.id}`)
+      .text(`❌ NO  — ${label}`, `bm:bet:no:${shortKey}`)
       .row();
   }
   kb.text("← Categories", "bm:list");
@@ -4047,9 +4049,14 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
   if (data.startsWith("bm:bet:")) {
     const parts = data.split(":");
     const side = parts[2] as "yes" | "no";
-    const eventId = parts[3] ?? "";
-    const marketId = parts[4] ?? "";
-    if (!eventId || !marketId || (side !== "yes" && side !== "no")) return;
+    const shortKey = parts[3] ?? "";
+    if (!shortKey || (side !== "yes" && side !== "no")) return;
+
+    // Resolve short key → full eventId:marketId
+    const stored = await redis.get(`bayse:mkt:${shortKey}`);
+    if (!stored) { await ctx.reply("Market session expired. Please tap /markets again."); return; }
+    const [eventId, marketId] = stored.split(":");
+    if (!eventId || !marketId) return;
 
     const events = await getCachedBayseEvents().catch(() => [] as BayseEvent[]);
     const event = events.find((e) => e.id === eventId);
