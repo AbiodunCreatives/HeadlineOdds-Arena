@@ -103,6 +103,10 @@ a:focus-visible {
   gap: 18px;
 }
 
+.trade-app > * {
+  min-width: 0;
+}
+
 .trade-surface,
 .trade-actions-panel,
 .trade-loading-panel,
@@ -144,6 +148,7 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 16px;
+  min-width: 0;
 }
 
 .trade-brand-mark {
@@ -182,12 +187,14 @@ a:focus-visible {
 .trade-brand h1 {
   font-size: clamp(1.55rem, 3vw, 2rem);
   line-height: 1.05;
+  text-wrap: balance;
 }
 
 .trade-topbar-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .trade-icon-button,
@@ -278,6 +285,7 @@ a:focus-visible {
   font-size: 1.15rem;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .trade-timer.is-live {
@@ -396,6 +404,7 @@ a:focus-visible {
   font-weight: 700;
   color: var(--muted);
   background: var(--surface);
+  white-space: nowrap;
 }
 
 .trade-round-chip.is-selected {
@@ -455,6 +464,7 @@ a:focus-visible {
   position: sticky;
   bottom: 10px;
   padding: 20px;
+  align-self: end;
 }
 
 .trade-arena-badge {
@@ -504,6 +514,7 @@ a:focus-visible {
   gap: 10px;
   min-height: 104px;
   padding: 18px;
+  min-width: 0;
 }
 
 .trade-side-up {
@@ -748,21 +759,34 @@ a:focus-visible {
 }
 
 @media (max-width: 900px) {
+  .trade-shell {
+    padding-top: 18px;
+  }
+
   .trade-stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trade-actions-panel {
+    position: static;
   }
 }
 
 @media (max-width: 640px) {
   .trade-shell {
-    padding-inline: 12px;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .trade-app {
+    gap: 12px;
   }
 
   .trade-surface,
   .trade-actions-panel,
   .trade-loading-panel,
   .trade-error-panel {
-    padding: 18px;
+    padding: 14px;
+    border-radius: 20px;
   }
 
   .trade-topbar,
@@ -773,6 +797,21 @@ a:focus-visible {
     flex-direction: column;
   }
 
+  .trade-brand {
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .trade-brand-mark {
+    width: 52px;
+    height: 52px;
+    font-size: 0.76rem;
+  }
+
+  .trade-brand h1 {
+    font-size: 1.45rem;
+  }
+
   .trade-topbar-actions,
   .trade-footer-actions {
     width: 100%;
@@ -781,12 +820,14 @@ a:focus-visible {
   .trade-icon-button,
   .trade-button {
     flex: 1;
+    min-width: 0;
   }
 
   .trade-price-block {
     width: 100%;
+    min-width: 0;
     padding-right: 0;
-    padding-bottom: 14px;
+    padding-bottom: 12px;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
@@ -796,25 +837,180 @@ a:focus-visible {
     padding-bottom: 0;
   }
 
+  .trade-price-block strong {
+    font-size: 1.7rem;
+  }
+
   .trade-timer {
     margin-left: 0;
+    font-size: 1rem;
   }
 
   .trade-chance-row {
     align-items: flex-start;
     flex-direction: column;
+    gap: 8px;
+  }
+
+  .trade-chance-value {
+    font-size: 2.2rem;
+  }
+
+  .trade-chance-caption {
+    letter-spacing: 0.16em;
   }
 
   .trade-chart-svg {
-    height: 200px;
+    height: 176px;
+  }
+
+  .trade-chart-card {
+    padding: 14px 12px 10px;
+  }
+
+  .trade-chart-labels {
+    font-size: 0.76rem;
+  }
+
+  .trade-rounds-panel {
+    margin-top: 14px;
+    padding: 12px;
+  }
+
+  .trade-section-head h2 {
+    font-size: 1.05rem;
+  }
+
+  .trade-updated-at {
+    font-size: 0.78rem;
+  }
+
+  .trade-rounds-rail {
+    gap: 8px;
+    margin-top: 12px;
+    padding-bottom: 4px;
+  }
+
+  .trade-round-chip {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+  }
+
+  .trade-stats-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .trade-stat-card {
+    padding: 14px;
+  }
+
+  .trade-stat-card strong {
+    font-size: 1.02rem;
+  }
+
+  .trade-arena-badge {
+    min-height: 32px;
+    font-size: 0.76rem;
+  }
+
+  .trade-callout,
+  .trade-lock-card,
+  .trade-stake-tray {
+    margin-top: 12px;
+    padding: 14px;
   }
 
   .trade-side-grid,
   .trade-stake-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  .trade-side-grid {
+    margin-top: 14px;
+  }
+
+  .trade-side-button {
+    min-height: 84px;
+    padding: 14px;
+    gap: 6px;
+  }
+
+  .trade-side-price {
+    font-size: 1.18rem;
+  }
+
+  .trade-stake-grid {
+    margin-top: 12px;
+  }
+
+  .trade-stake-button {
+    padding: 14px 12px;
   }
 
   .trade-actions-panel {
-    bottom: 0;
+    position: static;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .trade-footer-actions {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 390px) {
+  .trade-shell {
+    padding-inline: 8px;
+  }
+
+  .trade-surface,
+  .trade-actions-panel,
+  .trade-loading-panel,
+  .trade-error-panel {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .trade-brand {
+    gap: 10px;
+  }
+
+  .trade-brand-mark {
+    width: 46px;
+    height: 46px;
+  }
+
+  .trade-brand h1 {
+    font-size: 1.28rem;
+  }
+
+  .trade-icon-button,
+  .trade-button,
+  .trade-text-button {
+    padding-inline: 12px;
+  }
+
+  .trade-price-block strong {
+    font-size: 1.5rem;
+  }
+
+  .trade-chance-value {
+    font-size: 1.95rem;
+  }
+
+  .trade-chart-svg {
+    height: 158px;
+  }
+
+  .trade-round-chip {
+    padding: 9px 11px;
+    font-size: 0.84rem;
+  }
+
+  .trade-stat-card,
+  .trade-callout,
+  .trade-lock-card,
+  .trade-stake-tray {
+    padding: 12px;
   }
 }
