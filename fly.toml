@@ -27,10 +27,9 @@ kill_timeout = 30
     interval = "30s"
     method = "GET"
     timeout = "10s"
-    path = "/health"
+    path = "/"
     [http_service.checks.headers]
       X-Forwarded-Proto = "https"
-      x-health-check-token = "${HEALTH_CHECK_TOKEN}"
 
 [[vm]]
   memory = "512mb"
