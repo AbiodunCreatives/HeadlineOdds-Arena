@@ -9,13 +9,19 @@ import { getBalance, debitBalance, creditBalance } from "../../db/balances.ts";
 import {
   listBayseEvents,
   placeBayseOrder,
+  sellBaysePosition,
+  getBaysePortfolio,
   sharesForAmount,
   potentialPayoutNgn,
   ngnToUsdc,
   type BayseEvent,
   type BayseMarket,
 } from "../../bayse-trading.ts";
-import { insertBaysePosition } from "../../bayse-settlement.ts";
+import {
+  insertBaysePosition,
+  getUserBaysePositions,
+  closeBaysePosition,
+} from "../../bayse-settlement.ts";
 import { supabase } from "../../db/client.ts";
 import { redis } from "../../utils/rateLimit.ts";
 import {
@@ -4156,4 +4162,137 @@ export async function handleBayseCustomBetInput(ctx: Context): Promise<boolean> 
   await clearBayseBetState(ctx.from.id);
   await placeBayseMarketBet(ctx, state.eventId, state.marketId, state.side as "yes" | "no", ngnAmount);
   return true;
+}
+
+// ── Portfolio ─────────────────────────────────────────────────────────────────
+
+function buildPortfolioText(
+  positions: import("../../bayse-settlement.ts").BaysePositionRow[],
+  liveMap: Map<string, import("../../bayse-trading.ts").BaysePosition>
+): string {
+  if (positions.length === 0) {
+    return "📂 <b>Your Portfolio</b>\n\nNo positions yet. Use /markets to place a trade.";
+  }
+
+  const lines: string[] = ["📂 <b>Your Portfolio</b>\n"];
+  for (const pos of positions) {
+    const live = liveMap.get(pos.outcome_id);
+    const currentValue = live ? live.currentValue : null;
+    const payout = live ? live.payoutIfOutcomeWins : null;
+    const statusIcon =
+      pos.status === "won" ? "🏆" :
+      pos.status === "lost" ? "❌" :
+      pos.status === "refunded" ? "↩️" : "🟡";
+
+    lines.push(
+      `${statusIcon} <b>${escapeHtml(pos.event_title)}</b>\n` +
+      `  Side: ${c(pos.outcome_label)}  ·  Shares: ${c(pos.shares)}\n` +
+      `  Staked: ${c(`$${pos.amount_usdc.toFixed(4)}`)}` +
+      (currentValue !== null ? `  ·  Value: ${c(`₦${currentValue.toFixed(0)}`)}` : "") +
+      (payout !== null ? `  ·  Payout if win: ${c(`₦${payout.toFixed(0)}`)}` : "") +
+      (pos.status !== "open" && pos.status !== "pending" && pos.payout_usdc !== null
+        ? `  ·  Settled: ${c(`$${pos.payout_usdc.toFixed(4)}`)}`
+        : "")
+    );
+  }
+  return lines.join("\n");
+}
+
+function buildPortfolioKeyboard(
+  positions: import("../../bayse-settlement.ts").BaysePositionRow[]
+): import("grammy").InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const open = positions.filter((p) => p.status === "open" || p.status === "pending");
+  for (const pos of open) {
+    const label = `Sell — ${pos.outcome_label} ${pos.event_title.slice(0, 20)}`;
+    kb.text(label, `bm:sell:${pos.id}`).row();
+  }
+  kb.text("🔄 Refresh", "bm:portfolio").row();
+  kb.text("📊 Markets", "bm:list");
+  return kb;
+}
+
+export async function handlePortfolio(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  const [positions, portfolio] = await Promise.all([
+    getUserBaysePositions(ctx.from.id),
+    getBaysePortfolio().catch(() => [] as import("../../bayse-trading.ts").BaysePosition[]),
+  ]);
+  const liveMap = new Map(portfolio.map((p) => [p.outcomeId, p]));
+  await ctx.reply(buildPortfolioText(positions, liveMap), {
+    parse_mode: "HTML",
+    reply_markup: buildPortfolioKeyboard(positions),
+  });
+}
+
+export async function handlePortfolioCallback(ctx: Context): Promise<void> {
+  if (!ctx.from || !ctx.callbackQuery?.data) return;
+  const data = ctx.callbackQuery.data;
+
+  // ── Refresh portfolio ─────────────────────────────────────────────────────
+  if (data === "bm:portfolio") {
+    const [positions, portfolio] = await Promise.all([
+      getUserBaysePositions(ctx.from.id),
+      getBaysePortfolio().catch(() => [] as import("../../bayse-trading.ts").BaysePosition[]),
+    ]);
+    const liveMap = new Map(portfolio.map((p) => [p.outcomeId, p]));
+    await editTradePromptMessage(
+      ctx,
+      buildPortfolioText(positions, liveMap),
+      buildPortfolioKeyboard(positions),
+      "HTML"
+    );
+    return;
+  }
+
+  // ── Sell position ─────────────────────────────────────────────────────────
+  if (data.startsWith("bm:sell:")) {
+    const positionId = data.slice("bm:sell:".length);
+    const positions = await getUserBaysePositions(ctx.from.id);
+    const pos = positions.find((p) => p.id === positionId);
+
+    if (!pos || (pos.status !== "open" && pos.status !== "pending")) {
+      await ctx.answerCallbackQuery("Position not found or already settled.");
+      return;
+    }
+
+    await ctx.answerCallbackQuery("Selling…");
+
+    let saleProceeds = 0;
+    try {
+      const result = await sellBaysePosition({
+        eventId: pos.event_id,
+        marketId: pos.market_id,
+        outcomeId: pos.outcome_id,
+        shares: pos.shares,
+      });
+      // Bayse returns amount in NGN — convert to USDC
+      saleProceeds = ngnToUsdc(result.order.amount ?? 0);
+    } catch (err) {
+      console.error("[bayse] Sell failed:", err instanceof Error ? err.message : err);
+      await ctx.reply(
+        `❌ Sell failed: ${err instanceof Error ? escapeHtml(err.message) : "Bayse unavailable. Try again later."}`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    // Credit proceeds and mark position closed
+    await Promise.all([
+      creditBalance(ctx.from.id, saleProceeds, {
+        reason: "bayse_position_sold",
+        referenceType: "bayse_position",
+        referenceId: pos.id,
+        idempotencyKey: `bayse_sell:${pos.id}`,
+      }),
+      closeBaysePosition(pos.id, saleProceeds),
+    ]);
+
+    await ctx.reply(
+      `✅ <b>Position sold</b>\n\n` +
+      `${escapeHtml(pos.event_title)}\n` +
+      `Proceeds: ${c(`$${saleProceeds.toFixed(4)} USDC`)} credited to your wallet.`,
+      { parse_mode: "HTML" }
+    );
+  }
 }

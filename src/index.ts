@@ -34,6 +34,8 @@ import {
   handleMarkets,
   handleMarketsCallback,
   handleBayseCustomBetInput,
+  handlePortfolio,
+  handlePortfolioCallback,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -215,8 +217,11 @@ bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.command("markets", wrap(handleMarkets));
+bot.command("portfolio", wrap(handlePortfolio));
 bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
 bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
+bot.callbackQuery(/^bm:portfolio/, wrap(handlePortfolioCallback));
+bot.callbackQuery(/^bm:sell:/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:/, wrap(handleMarketsCallback));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));

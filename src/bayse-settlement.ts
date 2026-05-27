@@ -70,6 +70,29 @@ export async function getOpenBaysePositions(): Promise<BaysePositionRow[]> {
   return (data ?? []) as BaysePositionRow[];
 }
 
+export async function getUserBaysePositions(telegramId: number): Promise<BaysePositionRow[]> {
+  const { data, error } = await supabase
+    .from("bayse_positions")
+    .select("*")
+    .eq("telegram_id", telegramId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) throw error;
+  return (data ?? []) as BaysePositionRow[];
+}
+
+export async function closeBaysePosition(positionId: string, payoutUsdc: number): Promise<void> {
+  await supabase
+    .from("bayse_positions")
+    .update({
+      status: "refunded",
+      payout_usdc: payoutUsdc,
+      payout_ngn: null,
+      settled_at: new Date().toISOString(),
+    })
+    .eq("id", positionId);
+}
+
 async function settlePosition(
   position: BaysePositionRow,
   outcome: "won" | "lost",

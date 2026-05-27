@@ -182,6 +182,24 @@ export async function getBaysePortfolio(): Promise<BaysePosition[]> {
   return data.outcomeBalances ?? [];
 }
 
+// ── Sell (exit) a position ────────────────────────────────────────────────────
+
+export async function sellBaysePosition(input: {
+  eventId: string;
+  marketId: string;
+  outcomeId: string;
+  shares: number;
+}): Promise<BayseOrderResult> {
+  const path = `/pm/events/${input.eventId}/markets/${input.marketId}/orders`;
+  return request<BayseOrderResult>("POST", path, {
+    side: "SELL",
+    outcomeId: input.outcomeId,
+    quantity: input.shares,
+    type: "MARKET",
+    currency: "NGN",
+  });
+}
+
 // ── Get wallet balance ────────────────────────────────────────────────────────
 
 export async function getBayseWalletBalance(): Promise<{ usd: number; ngn: number }> {
