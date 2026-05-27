@@ -105,7 +105,29 @@ async function main() {
   assert(Number.isFinite(fallback.momentum) && Number.isFinite(fallback.rsi) && Number.isFinite(fallback.composite));
   console.log(`   ✅ fallback signals: ${JSON.stringify(fallback)}`);
 
-  console.log("\n🎉 All 6 smoke tests passed.");
+  // ── Test 7: generateTradeReceiptPng — produces valid PNG buffer ───────────
+  console.log("7. generateTradeReceiptPng — produces valid PNG buffer");
+  const { generateTradeReceiptPng } = await import("../src/trade-receipt.ts");
+
+  for (const direction of ["UP", "DOWN"] as const) {
+    const buf = generateTradeReceiptPng({
+      direction,
+      stake: 25,
+      gameCode: "ARENA1",
+      roundNumber: 3,
+      targetPrice: 75930.01,
+      currentPrice: 75981.36,
+      upPrice: 0.89,
+      downPrice: 0.11,
+      remainingBalance: 975,
+    });
+    assert(Buffer.isBuffer(buf) && buf.length > 1000, `${direction}: PNG buffer too small`);
+    // PNG magic bytes: 89 50 4E 47
+    assert(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47, `${direction}: not a valid PNG`);
+  }
+  console.log("   ✅ UP and DOWN receipts generated as valid PNG buffers");
+
+  console.log("\n🎉 All 7 smoke tests passed.");
 }
 
 main().catch((err) => { console.error("❌", err); process.exit(1); });

@@ -103,30 +103,52 @@ function buildMarketUrl(marketId: string | null): string | null {
   return marketId ? `https://app.bayse.markets/market/${marketId}` : null;
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init?.headers ?? {}),
-    },
-  });
+async function fetchJson<T>(url: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        ...(init?.headers ?? {}),
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Request failed with ${response.status}`);
+    }
+
+    return response.json() as Promise<T>;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return response.json() as Promise<T>;
 }
 
+// Tries CoinGecko first, falls back to Binance public ticker — both are free and unauthenticated.
 async function getCurrentBtcPrice(): Promise<number | null> {
   try {
     const payload = await fetchJson<{ bitcoin?: { usd?: number } }>(
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd'
+      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      undefined,
+      5000
     );
+    const price = parseNumber(payload.bitcoin?.usd);
+    if (price !== null) return price;
+  } catch {
+    // fall through to backup
+  }
 
-    return parseNumber(payload.bitcoin?.usd) ?? null;
+  try {
+    const payload = await fetchJson<{ price?: string }>(
+      'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT',
+      undefined,
+      5000
+    );
+    return parseNumber(payload.price);
   } catch {
     return null;
   }
@@ -175,10 +197,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const [openPayload, resolvedPayload, currentPrice, overlay] = await Promise.all([
       fetchJson<BayseEventsResponse>(
-        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&limit=1&status=open`
+        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&limit=1&status=open`,
+        undefined,
+        8000
       ),
       fetchJson<BayseEventsResponse>(
-        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&size=5&limit=5&status=resolved`
+        `${BAYSE_BASE}/pm/events?seriesSlug=${BAYSE_SERIES_SLUG}&page=1&size=5&limit=5&status=resolved`,
+        undefined,
+        8000
       ),
       getCurrentBtcPrice(),
       getArenaOverlay(tgId, code),

@@ -2,7 +2,7 @@ import { createServer } from "http";
 import { timingSafeEqual } from "crypto";
 
 import express from "express";
-import { Bot, type Context } from "grammy";
+import { Bot, InputFile, type Context } from "grammy";
 
 import { registerAdminDashboard } from "./admin-dashboard.ts";
 import { registerBtcChartMenuPage } from "./btc-chart-menu.ts";
@@ -60,6 +60,7 @@ import {
   getMarketTimelineSnapshot,
   type CurrentRoundSnapshot,
 } from "./bayse-market.ts";
+import { generateTradeReceiptPng } from "./trade-receipt.ts";
 import { getFantasyLeagueStatusView } from "./fantasy-game.ts";
 import { getLatestFantasyTradeForMember } from "./db/fantasy.ts";
 import { saveFantasyTradeReference } from "./fantasy-state.ts";
@@ -256,10 +257,22 @@ bot.on("message:web_app_data", wrap(async (ctx) => {
   const callbackData = `flt:d:${payload.amount}:${payload.direction}:r:${payload.ref}`;
   try {
     const result = await placeFantasyTradeFromCallbackData({ telegramId: ctx.from.id, callbackData });
-    await ctx.reply(
-      `✅ Trade placed! ${result.direction === "UP" ? "↑ YES" : "↓ NO"} · ${result.stake} USDC · Round #${result.roundNumber}\nBalance: $${result.remainingBalance.toFixed(2)}`,
-      { parse_mode: undefined }
-    );
+    const snapshot = await getCurrentRoundSnapshot("BTC").catch(() => null);
+    const pricing = snapshot?.pricing ?? null;
+    const { getRoundCurrentPrice } = await import("./fantasy-round.ts");
+    const currentPrice = pricing ? await getRoundCurrentPrice(pricing).catch(() => null) : null;
+    const png = generateTradeReceiptPng({
+      direction: result.direction,
+      stake: result.stake,
+      gameCode: result.game.code,
+      roundNumber: result.roundNumber,
+      targetPrice: pricing?.eventThreshold ?? null,
+      currentPrice,
+      upPrice: pricing?.upPrice ?? null,
+      downPrice: pricing?.downPrice ?? null,
+      remainingBalance: result.remainingBalance,
+    });
+    await ctx.replyWithPhoto(new InputFile(png, "receipt.png"));
   } catch (err) {
     await ctx.reply(`❌ ${err instanceof Error ? err.message : "Trade failed. Please try again."}`);
   }

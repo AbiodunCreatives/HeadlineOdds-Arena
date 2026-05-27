@@ -93,9 +93,9 @@ fly secrets set \
 
 Notes:
 
-- `WEBHOOK_URL` must be the Fly hostname because [src/index.ts](C:/Users/USER/OneDrive/Desktop/fantasybot/src/index.ts:377) registers the Telegram webhook from that env var at startup.
+- `WEBHOOK_URL` must be the Fly hostname because [src/index.ts](src/index.ts) registers the Telegram webhook from that env var at startup.
 - `PAJCASH_WEBHOOK_BASE_URL` should also move off the old Render domain.
-- `HEALTH_CHECK_TOKEN` is required because [src/config.ts](C:/Users/USER/OneDrive/Desktop/fantasybot/src/config.ts:175) fails startup without it.
+- `HEALTH_CHECK_TOKEN` is required because [src/config.ts](src/config.ts) fails startup without it.
 
 ## 3. Deploy
 
