@@ -3737,18 +3737,22 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
     }
   } catch { /* ignore */ }
 
-  const events = await listBayseEvents({ size: 50 }).catch((error) => {
-    console.error("[bayse] list events failed:", error);
-    return [] as BayseEvent[];
-  });
-
-  if (events.length > 0) {
+  // Try twice — Bayse relay occasionally has transient 5xx on first hit
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      await redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL);
-    } catch { /* ignore */ }
+      const events = await listBayseEvents({ size: 50 });
+      if (events.length > 0) {
+        redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL).catch(() => null);
+      }
+      return events;
+    } catch (err) {
+      lastError = err;
+      console.error(`[bayse] list events failed (attempt ${attempt}/2):`, err instanceof Error ? err.message : err);
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
+    }
   }
-
-  return events;
+  throw lastError;
 }
 
 // ── Step 1: Category picker ───────────────────────────────────────────────────
@@ -4033,7 +4037,7 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
         "HTML"
       );
     } catch (err) {
-      console.error("[bayse] category load failed:", err);
+      console.error("[bayse] category load failed:", err instanceof Error ? err.message : err);
       await ctx.reply("Markets are temporarily unavailable. Please try again in a minute.");
     }
     return;
