@@ -5,7 +5,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getCurrentRoundSnapshot } from "../../bayse-market.ts";
 import { getBtcChartMenuUrl } from "../../btc-chart-menu.ts";
 import { config } from "../../config.ts";
-import { getBalance, debitBalance } from "../../db/balances.ts";
+import { getBalance, debitBalance, creditBalance } from "../../db/balances.ts";
 import {
   listBayseEvents,
   placeBayseOrder,
@@ -3965,12 +3965,23 @@ async function placeBayseMarketBet(
     return;
   }
 
-  let bayseOrderId: string | null = null;
+  let bayseOrderId: string;
   try {
     const order = await placeBayseOrder({ eventId, marketId, outcomeId, amountNgn: ngnAmount });
     bayseOrderId = order.order.id;
   } catch (err) {
-    console.error("[bayse] Order placement failed:", err);
+    console.error("[bayse] Order placement failed — refunding user:", err instanceof Error ? err.message : err);
+    // Refund the debit — the order never hit Bayse
+    await creditBalance(ctx.from.id, usdcAmount, {
+      reason: "bayse_order_failed_refund",
+      referenceType: "bayse_position",
+      idempotencyKey: `bayserefund:${ctx.from.id}:${marketId}:${Date.now()}`,
+    }).catch((e) => console.error("[bayse] Refund failed:", e));
+    await ctx.reply(
+      `❌ Order failed — your balance has been refunded.\n\n${err instanceof Error ? escapeHtml(err.message) : "Bayse market unavailable."}`,
+      { parse_mode: "HTML" }
+    );
+    return;
   }
 
   const position = await insertBaysePosition({
