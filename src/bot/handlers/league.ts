@@ -4323,7 +4323,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       // Position was never registered on Bayse (e.g. placed before API keys were set)
       // — refund the original staked amount instead of failing
-      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured");
+      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured") || msg.includes("insufficient shares");
       if (!notOnBayse) {
         console.error("[bayse] Sell failed:", msg);
         await ctx.reply(
