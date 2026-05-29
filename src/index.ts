@@ -36,6 +36,9 @@ import {
   handleBayseCustomBetInput,
   handlePortfolio,
   handlePortfolioCallback,
+  handleBayseConnect,
+  handleBayseConnectTextInput,
+  handleBayseConnectCallback,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -218,6 +221,8 @@ bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.command("markets", wrap(handleMarkets));
 bot.command("portfolio", wrap(handlePortfolio));
+bot.command("connectbayse", wrap(handleBayseConnect));
+bot.callbackQuery("bayse:disconnect", wrap(handleBayseConnectCallback));
 bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
 bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
 bot.callbackQuery(/^bm:portfolio/, wrap(handlePortfolioCallback));
@@ -233,6 +238,9 @@ bot.on("message:text", async (ctx, next) => {
 
   // Prediction market custom bet amount
   if (await handleMarketBetCustom(ctx)) return;
+
+  // Bayse account connect flow (email / password steps)
+  if (await handleBayseConnectTextInput(ctx)) return;
 
   // Bayse market custom bet amount
   if (await handleBayseCustomBetInput(ctx)) return;

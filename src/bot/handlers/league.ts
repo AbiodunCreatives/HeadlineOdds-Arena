@@ -4317,6 +4317,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
         const livePos = portfolio.find((p) => p.outcomeId === pos.outcome_id);
         if (livePos && livePos.balance > 0) liveShares = livePos.balance;
       }
+      if (liveShares <= 0) throw new Error("no_shares");
       const result = await sellBaysePosition({
         eventId: pos.event_id,
         marketId: pos.market_id,
@@ -4328,18 +4329,22 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       saleProceeds = ngnToUsdc(result.order?.amount ?? result.amount ?? pos.amount_ngn);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Position was never registered on Bayse (e.g. placed before API keys were set)
-      // — refund the original staked amount instead of failing
-      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured");
-      if (!notOnBayse) {
+      // Refund if: no API keys, position not on Bayse, market closed/rejected, or no shares
+      const shouldRefund =
+        msg.includes("401") ||
+        msg.includes("404") ||
+        msg.includes("400") ||
+        msg.includes("not found") ||
+        msg.includes("not configured") ||
+        msg.includes("no_shares") ||
+        msg.includes("closed") ||
+        msg.includes("resolved");
+      if (!shouldRefund) {
         console.error("[bayse] Sell failed:", msg);
-        await ctx.reply(
-          `❌ Sell failed: ${escapeHtml(msg)}`,
-          { parse_mode: "HTML" }
-        );
+        await ctx.reply(`❌ Sell failed: ${escapeHtml(msg)}`, { parse_mode: "HTML" });
         return;
       }
-      console.warn(`[bayse] Position ${pos.id} not on Bayse — refunding staked amount`);
+      console.warn(`[bayse] Position ${pos.id} not sellable — refunding staked amount (${msg})`);
       saleProceeds = pos.amount_usdc;
       isRefund = true;
     }
@@ -4351,7 +4356,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
         referenceId: pos.id,
         idempotencyKey: `bayse_sell:${pos.id}`,
       }),
-      closeBaysePosition(pos.id, saleProceeds),
+      closeBaysePosition(pos.id, saleProceeds, isRefund ? "refunded" : "sold"),
     ]);
 
     await ctx.reply(

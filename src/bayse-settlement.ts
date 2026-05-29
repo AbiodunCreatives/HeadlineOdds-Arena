@@ -19,7 +19,7 @@ export interface BaysePositionRow {
   shares: number;
   price_at_bet: number;
   bayse_order_id: string | null;
-  status: "pending" | "open" | "won" | "lost" | "refunded";
+  status: "pending" | "open" | "won" | "lost" | "sold" | "refunded";
   payout_ngn: number | null;
   payout_usdc: number | null;
   created_at: string;
@@ -81,11 +81,15 @@ export async function getUserBaysePositions(telegramId: number): Promise<BaysePo
   return (data ?? []) as BaysePositionRow[];
 }
 
-export async function closeBaysePosition(positionId: string, payoutUsdc: number): Promise<void> {
+export async function closeBaysePosition(
+  positionId: string,
+  payoutUsdc: number,
+  status: "sold" | "refunded" = "refunded"
+): Promise<void> {
   await supabase
     .from("bayse_positions")
     .update({
-      status: "refunded",
+      status,
       payout_usdc: payoutUsdc,
       payout_ngn: null,
       settled_at: new Date().toISOString(),
