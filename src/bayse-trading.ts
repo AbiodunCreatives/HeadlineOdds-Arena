@@ -6,14 +6,15 @@ const NGN_BASE = 100; // ₦100 per share at probability 1.0
 
 // ── HMAC auth ─────────────────────────────────────────────────────────────────
 
-function sign(method: string, path: string, body: string | null): Record<string, string> {
-  const pub = config.BAYSE_PUBLIC_KEY;
-  const sec = config.BAYSE_SECRET_KEY;
+function sign(method: string, path: string, body: string | null, keys?: { pub: string; sec: string }): Record<string, string> {
+  const pub = keys?.pub ?? config.BAYSE_PUBLIC_KEY;
+  const sec = keys?.sec ?? config.BAYSE_SECRET_KEY;
   if (!pub || !sec) throw new Error("BAYSE_PUBLIC_KEY / BAYSE_SECRET_KEY not configured.");
 
   const ts = Math.floor(Date.now() / 1000).toString();
   const bodyHash = body ? createHash("sha256").update(body).digest("hex") : "";
-  const payload = `${ts}.${method}.${path}.${bodyHash}`;
+  const signedPath = `/v1${path}`;
+  const payload = `${ts}.${method}.${signedPath}.${bodyHash}`;
   const sig = createHmac("sha256", sec).update(payload).digest("base64");
 
   return {
@@ -24,14 +25,14 @@ function sign(method: string, path: string, body: string | null): Record<string,
   };
 }
 
-async function request<T>(method: string, path: string, body?: object): Promise<T> {
+async function request<T>(method: string, path: string, body?: object, keys?: { pub: string; sec: string }): Promise<T> {
   const bodyStr = body ? JSON.stringify(body) : null;
-  const pub = config.BAYSE_PUBLIC_KEY;
+  const pub = keys?.pub ?? config.BAYSE_PUBLIC_KEY;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (method === "GET") {
     if (pub) headers["X-Public-Key"] = pub;
   } else {
-    Object.assign(headers, sign(method, path, bodyStr));
+    Object.assign(headers, sign(method, path, bodyStr, keys));
   }
 
   const res = await fetch(`${BASE}${path}`, {
@@ -163,7 +164,8 @@ export async function placeBayseOrder(input: {
   eventId: string;
   marketId: string;
   outcomeId: string;
-  amountNgn: number;   // total NGN across all users on this side
+  amountNgn: number;
+  keys?: { pub: string; sec: string };
 }): Promise<BayseOrderResult> {
   const path = `/pm/events/${input.eventId}/markets/${input.marketId}/orders`;
   return request<BayseOrderResult>("POST", path, {
@@ -172,13 +174,13 @@ export async function placeBayseOrder(input: {
     amount: input.amountNgn,
     type: "MARKET",
     currency: "NGN",
-  });
+  }, input.keys);
 }
 
 // ── Get portfolio (all positions) ─────────────────────────────────────────────
 
-export async function getBaysePortfolio(): Promise<BaysePosition[]> {
-  const data = await request<{ outcomeBalances?: BaysePosition[] }>("GET", "/pm/portfolio");
+export async function getBaysePortfolio(keys?: { pub: string; sec: string }): Promise<BaysePosition[]> {
+  const data = await request<{ outcomeBalances?: BaysePosition[] }>("GET", "/pm/portfolio", undefined, keys);
   return data.outcomeBalances ?? [];
 }
 
@@ -188,16 +190,17 @@ export async function sellBaysePosition(input: {
   eventId: string;
   marketId: string;
   outcomeId: string;
-  shares: number;
+  amountNgn: number;
+  keys?: { pub: string; sec: string };
 }): Promise<BayseOrderResult> {
   const path = `/pm/events/${input.eventId}/markets/${input.marketId}/orders`;
   return request<BayseOrderResult>("POST", path, {
     side: "SELL",
     outcomeId: input.outcomeId,
-    quantity: input.shares,
+    amount: input.amountNgn,
     type: "MARKET",
     currency: "NGN",
-  });
+  }, input.keys);
 }
 
 // ── Get wallet balance ────────────────────────────────────────────────────────
@@ -211,6 +214,48 @@ export async function getBayseWalletBalance(): Promise<{ usd: number; ngn: numbe
     usd: assets.find((a) => a.symbol === "USD")?.availableBalance ?? 0,
     ngn: assets.find((a) => a.symbol === "NGN")?.availableBalance ?? 0,
   };
+}
+
+// ── User account: login + create API key ─────────────────────────────────────
+
+export async function bayseLogin(email: string, password: string): Promise<{
+  token: string;
+  deviceId: string;
+}> {
+  const res = await fetch(`${BASE}/user/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Bayse login failed: ${text}`);
+  }
+  const data = await res.json() as { token: string; deviceId: string };
+  return { token: data.token, deviceId: data.deviceId };
+}
+
+export async function bayseCreateApiKey(token: string, deviceId: string): Promise<{
+  publicKey: string;
+  secretKey: string;
+}> {
+  const res = await fetch(`${BASE}/user/me/api-keys`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-auth-token": token,
+      "x-device-id": deviceId,
+    },
+    body: JSON.stringify({ name: "HeadlineOdds Bot" }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Bayse key creation failed: ${text}`);
+  }
+  const data = await res.json() as { publicKey: string; secretKey: string };
+  return { publicKey: data.publicKey, secretKey: data.secretKey };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -4314,7 +4314,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
         eventId: pos.event_id,
         marketId: pos.market_id,
         outcomeId: pos.outcome_id,
-        shares: pos.shares,
+        amountNgn: pos.amount_ngn,
         keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined,
       });
       saleProceeds = ngnToUsdc(result.order.amount ?? 0);
