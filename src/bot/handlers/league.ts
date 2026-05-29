@@ -3879,20 +3879,26 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
 
 // ── Step 3: Quote screen ──────────────────────────────────────────────────────
 
-function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no"): string {
+function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no", balanceUsdc: number): string {
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
-  const reframed = reframeTitleWithCandidate(event.title, market.outcome1Label);
   const sideLabel = side === "yes" ? "YES" : "NO";
   const minBet = Math.ceil(price * 100);
+  const exShares = Math.floor(2000 / (price * 100));
+  const hasCandidateTitle = market.title && market.title.trim() &&
+    market.title.trim().toLowerCase() !== event.title.trim().toLowerCase();
+  const balanceNgn = Math.round(balanceUsdc * 1600);
+
   return [
-    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(reframed)}</b>`,
+    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(event.title)}</b>`,
+    hasCandidateTitle ? `   <i>${escapeHtml(market.title)}</i>` : "",
     "",
-    `Buying <b>${sideLabel}</b> at ${c(formatNgnPrice(price))}/share`,
-    `Win ${c("₦100")} per share if correct`,
+    `   Buying <b>${sideLabel}</b> at ${c(formatNgnPrice(price))}/share`,
     "",
-    `How much? Type a Naira amount (min ${c(`₦${minBet}`)})`,
-    `e.g. ${c("2000")} → ${Math.floor(2000 / (price * 100))} shares → win ${c(`₦${Math.floor(2000 / (price * 100)) * 100}`)}`,
-  ].join("\n");
+    `   Your balance: ${c(`$${balanceUsdc.toFixed(2)} USDC`)} (≈ ${c(`₦${balanceNgn.toLocaleString()}`)})`,
+    "",
+    `   Type a Naira amount (min ${c(`₦${minBet}`)})`,
+    `   e.g. ${c("₦2,000")} → ${exShares} shares → win ${c(`₦${(exShares * 100).toLocaleString()}`)}`,
+  ].filter((l) => l !== "").join("\n");
 }
 
 // ── Step 4: Receipt ───────────────────────────────────────────────────────────
@@ -4162,9 +4168,10 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     await saveBayseBetState(ctx.from.id, { eventId, marketId, side });
     await saveBayseCustomBetPending(ctx.from.id);
 
+    const balance = await getBalance(ctx.from.id).catch(() => 0);
     await editTradePromptMessage(
       ctx,
-      buildQuoteText(event, market, side),
+      buildQuoteText(event, market, side, balance),
       new InlineKeyboard().text(
         "← Back",
         `bm:cat:${FIXED_CATEGORIES.includes(normalizeCategoryKey(event.category)) ? normalizeCategoryKey(event.category) : "CRYPTO"}`
