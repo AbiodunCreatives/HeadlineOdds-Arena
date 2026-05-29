@@ -86,20 +86,26 @@ export interface BayseEvent {
 }
 
 export interface BayseOrderResult {
-  engine: "AMM" | "CLOB";
-  order: {
-    id: string;
-    outcome: string;
-    side: string;
-    type: string;
-    status: string;
-    amount: number;
-    price: number;
-    quantity: number;
-    currency: string;
-    createdAt: string;
-    updatedAt: string;
+  engine?: "AMM" | "CLOB";
+  // Bayse returns order fields either nested under `order` or at the top level
+  order?: {
+    id?: string;
+    outcome?: string;
+    side?: string;
+    type?: string;
+    status?: string;
+    amount?: number;
+    price?: number;
+    quantity?: number;
+    currency?: string;
+    createdAt?: string;
+    updatedAt?: string;
   };
+  // flat shape (personal API key responses)
+  id?: string;
+  amount?: number;
+  quantity?: number;
+  status?: string;
 }
 
 export interface BaysePosition {

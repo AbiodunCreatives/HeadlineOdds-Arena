@@ -4317,7 +4317,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
         amountNgn: pos.amount_ngn,
         keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined,
       });
-      saleProceeds = ngnToUsdc(result.order.amount ?? 0);
+      saleProceeds = ngnToUsdc(result.order?.amount ?? result.amount ?? pos.amount_ngn);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Position was never registered on Bayse (e.g. placed before API keys were set)
