@@ -3966,6 +3966,16 @@ async function placeBayseMarketBet(
 ): Promise<void> {
   if (!ctx.from) return;
 
+  // Require linked Bayse account — trades go directly from user's Bayse wallet
+  const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+  if (!userKeys) {
+    await ctx.reply(
+      `🔗 <b>Bayse account required</b>\n\nYou need to link your Bayse Markets account to place trades.\n\nUse /connectbayse to connect your account.`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
   const events = await getCachedBayseEvents();
   const event = events.find((e) => e.id === eventId);
   const market = event?.markets.find((m) => m.id === marketId);
@@ -3979,55 +3989,28 @@ async function placeBayseMarketBet(
   const outcomeLabel = side === "yes" ? market.outcome1Label : market.outcome2Label;
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
   const shares = sharesForAmount(ngnAmount, price);
-  const usdcAmount = ngnToUsdc(ngnAmount);
 
   if (shares < 1) {
-    await ctx.reply(`Minimum bet is ${c(`₦${Math.ceil(price * 100)} (1 share)`) }.`, { parse_mode: "HTML" });
-    return;
-  }
-
-  const balance = await getBalance(ctx.from.id);
-  if (balance < usdcAmount) {
-    await ctx.reply(
-      `💸 Insufficient balance.\n\nRequired: ${c(`$${usdcAmount.toFixed(4)} USDC`)}\nYour balance: ${c(`$${balance.toFixed(4)} USDC`)}`,
-      { parse_mode: "HTML", reply_markup: buildInsufficientBalanceKeyboard() }
-    );
-    return;
-  }
-
-  const debited = await debitBalance(ctx.from.id, usdcAmount, {
-    reason: "bayse_market_bet",
-    referenceType: "bayse_position",
-    idempotencyKey: `baysebet:${ctx.from.id}:${marketId}:${Date.now()}`,
-  });
-
-  if (!debited) {
-    await ctx.reply("Insufficient balance. Please top up your wallet.", {
-      reply_markup: buildInsufficientBalanceKeyboard(),
-    });
+    await ctx.reply(`Minimum bet is ${c(`₦${Math.ceil(price * 100)} (1 share)`)}.`, { parse_mode: "HTML" });
     return;
   }
 
   let bayseOrderId: string | undefined;
   try {
-    const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
-    const order = await placeBayseOrder({ eventId, marketId, outcomeId, amountNgn: ngnAmount, keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined });
+    const order = await placeBayseOrder({
+      eventId, marketId, outcomeId, amountNgn: ngnAmount,
+      keys: { pub: userKeys.publicKey, sec: userKeys.secretKey },
+    });
     bayseOrderId = order.order?.id ?? (order as unknown as { id?: string }).id;
   } catch (err) {
-    console.error("[bayse] Order placement failed — refunding user:", err instanceof Error ? err.message : err);
-    // Refund the debit — the order never hit Bayse
-    await creditBalance(ctx.from.id, usdcAmount, {
-      reason: "bayse_order_failed_refund",
-      referenceType: "bayse_position",
-      idempotencyKey: `bayserefund:${ctx.from.id}:${marketId}:${Date.now()}`,
-    }).catch((e) => console.error("[bayse] Refund failed:", e));
     await ctx.reply(
-      `❌ Order failed — your balance has been refunded.\n\n${err instanceof Error ? escapeHtml(err.message) : "Bayse market unavailable."}`,
+      `❌ Order failed.\n\n${err instanceof Error ? escapeHtml(err.message) : "Bayse market unavailable."}`,
       { parse_mode: "HTML" }
     );
     return;
   }
 
+  const usdcAmount = ngnToUsdc(ngnAmount);
   const position = await insertBaysePosition({
     telegramId: ctx.from.id,
     eventId,
@@ -4207,45 +4190,33 @@ export async function handleBayseCustomBetInput(ctx: Context): Promise<boolean> 
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 
 function buildPortfolioText(
-  positions: import("../../bayse-settlement.ts").BaysePositionRow[],
-  liveMap: Map<string, import("../../bayse-trading.ts").BaysePosition>
+  positions: import("../../bayse-trading.ts").BaysePosition[]
 ): string {
   if (positions.length === 0) {
-    return "📂 <b>Your Portfolio</b>\n\nNo positions yet. Use /markets to place a trade.";
+    return "📂 <b>Your Portfolio</b>\n\nNo open positions. Use /markets to place a trade.";
   }
-
   const lines: string[] = ["📂 <b>Your Portfolio</b>\n"];
   for (const pos of positions) {
-    const live = liveMap.get(pos.outcome_id);
-    const currentValue = live ? live.currentValue : null;
-    const payout = live ? live.payoutIfOutcomeWins : null;
-    const statusIcon =
-      pos.status === "won" ? "🏆" :
-      pos.status === "lost" ? "❌" :
-      pos.status === "refunded" ? "↩️" : "🟡";
-
     lines.push(
-      `${statusIcon} <b>${escapeHtml(pos.event_title)}</b>\n` +
-      `  Side: ${c(pos.outcome_label)}  ·  Shares: ${c(pos.shares)}\n` +
-      `  Staked: ${c(`$${pos.amount_usdc.toFixed(4)}`)}` +
-      (currentValue !== null ? `  ·  Value: ${c(`₦${currentValue.toFixed(0)}`)}` : "") +
-      (payout !== null ? `  ·  Payout if win: ${c(`₦${payout.toFixed(0)}`)}` : "") +
-      (pos.status !== "open" && pos.status !== "pending" && pos.payout_usdc !== null
-        ? `  ·  Settled: ${c(`$${pos.payout_usdc.toFixed(4)}`)}`
-        : "")
+      `🟡 <b>${escapeHtml(pos.market.event.title)}</b>\n` +
+      `  Side: ${c(pos.outcome)}  ·  Shares: ${c(pos.balance)}\n` +
+      `  Avg price: ${c(`₦${Math.round(pos.averagePrice * 100)}`)}` +
+      (pos.currentValue > 0 ? `  ·  Value: ${c(`₦${pos.currentValue.toFixed(0)}`)}` : "") +
+      (pos.payoutIfOutcomeWins > 0 ? `  ·  Payout if win: ${c(`₦${pos.payoutIfOutcomeWins.toFixed(0)}`)}` : "")
     );
   }
   return lines.join("\n");
 }
 
 function buildPortfolioKeyboard(
-  positions: import("../../bayse-settlement.ts").BaysePositionRow[]
+  positions: import("../../bayse-trading.ts").BaysePosition[]
 ): import("grammy").InlineKeyboard {
   const kb = new InlineKeyboard();
-  const open = positions.filter((p) => p.status === "open" || p.status === "pending");
-  for (const pos of open) {
-    const label = `Sell — ${pos.outcome_label} ${pos.event_title.slice(0, 20)}`;
-    kb.text(label, `bm:sell:${pos.id}`).row();
+  for (const pos of positions) {
+    if (pos.balance > 0) {
+      const label = `Sell — ${pos.outcome} ${pos.market.event.title.slice(0, 20)}`;
+      kb.text(label, `bm:sell:${pos.outcomeId}:${pos.market.id}:${pos.market.event.id}`).row();
+    }
   }
   kb.text("🔄 Refresh", "bm:portfolio").row();
   kb.text("📊 Markets", "bm:list");
@@ -4286,16 +4257,18 @@ async function syncBaysePositions(telegramId: number): Promise<void> {
 
 export async function handlePortfolio(ctx: Context): Promise<void> {
   if (!ctx.from) return;
-  // Sync any positions that exist on Bayse but are missing locally (e.g. from prior bot errors)
-  await syncBaysePositions(ctx.from.id).catch(() => null);
-  const [positions, portfolio] = await Promise.all([
-    getUserBaysePositions(ctx.from.id),
-    getBaysePortfolio().catch(() => [] as import("../../bayse-trading.ts").BaysePosition[]),
-  ]);
-  const liveMap = new Map(portfolio.map((p) => [p.outcomeId, p]));
-  await ctx.reply(buildPortfolioText(positions, liveMap), {
+  const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+  if (!userKeys) {
+    await ctx.reply(
+      `🔗 <b>Bayse account required</b>\n\nLink your Bayse account to view your positions.\n\nUse /connectbayse to connect.`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+  await ctx.reply(buildPortfolioText(portfolio), {
     parse_mode: "HTML",
-    reply_markup: buildPortfolioKeyboard(positions),
+    reply_markup: buildPortfolioKeyboard(portfolio),
   });
 }
 
@@ -4305,112 +4278,57 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
 
   // ── Refresh portfolio ─────────────────────────────────────────────────────
   if (data === "bm:portfolio") {
-    const [positions, portfolio] = await Promise.all([
-      getUserBaysePositions(ctx.from.id),
-      getBaysePortfolio().catch(() => [] as import("../../bayse-trading.ts").BaysePosition[]),
-    ]);
-    const liveMap = new Map(portfolio.map((p) => [p.outcomeId, p]));
-    await editTradePromptMessage(
-      ctx,
-      buildPortfolioText(positions, liveMap),
-      buildPortfolioKeyboard(positions),
-      "HTML"
-    );
+    const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+    if (!userKeys) {
+      await ctx.answerCallbackQuery("Link your Bayse account first — use /connectbayse");
+      return;
+    }
+    const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+    await editTradePromptMessage(ctx, buildPortfolioText(portfolio), buildPortfolioKeyboard(portfolio), "HTML");
     return;
   }
 
   // ── Sell position ─────────────────────────────────────────────────────────
   if (data.startsWith("bm:sell:")) {
-    const positionId = data.slice("bm:sell:".length);
-    const positions = await getUserBaysePositions(ctx.from.id);
-    const pos = positions.find((p) => p.id === positionId);
+    const parts = data.slice("bm:sell:".length).split(":");
+    const [outcomeId, marketId, eventId] = parts;
 
-    if (!pos || (pos.status !== "open" && pos.status !== "pending")) {
-      await ctx.answerCallbackQuery("Position not found or already settled.");
+    const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+    if (!userKeys) {
+      await ctx.answerCallbackQuery("Link your Bayse account first — use /connectbayse");
+      return;
+    }
+
+    // Get live position from Bayse
+    const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+    const pos = portfolio.find((p) => p.outcomeId === outcomeId);
+
+    if (!pos || pos.balance <= 0) {
+      await ctx.answerCallbackQuery("Position not found or already closed.");
       return;
     }
 
     await ctx.answerCallbackQuery("Selling…");
 
-    let saleProceeds = 0;
-    let isRefund = false;
     try {
-      const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
-      // Fetch live share balance from Bayse — try user keys first, then platform
-      let liveShares = pos.shares;
-      if (userKeys) {
-        const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
-        const livePos = portfolio.find((p) => p.outcomeId === pos.outcome_id);
-        if (livePos && livePos.balance > 0) liveShares = livePos.balance;
-      }
-      if (liveShares <= 0) {
-        // Try platform portfolio as fallback
-        const platPortfolio = await getBaysePortfolio().catch(() => []);
-        const platPos = platPortfolio.find((p) => p.outcomeId === pos.outcome_id);
-        if (platPos && platPos.balance > 0) liveShares = platPos.balance;
-      }
-      if (liveShares <= 0) throw new Error("no_shares");
-
-      // Try selling with user keys first; if 401/404, retry with platform keys
-      // (position may have been placed via platform account before user connected)
-      const trySell = async (keys?: { pub: string; sec: string }) =>
-        sellBaysePosition({ eventId: pos.event_id, marketId: pos.market_id, outcomeId: pos.outcome_id, amountNgn: pos.amount_ngn, shares: liveShares, keys });
-
-      let result: import("../../bayse-trading.ts").BayseOrderResult;
-      if (userKeys) {
-        try {
-          result = await trySell({ pub: userKeys.publicKey, sec: userKeys.secretKey });
-        } catch (e) {
-          const m = e instanceof Error ? e.message : String(e);
-          if (m.includes("401") || m.includes("404") || m.includes("403")) {
-            // Position is in platform account — retry without user keys
-            result = await trySell(undefined);
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        result = await trySell(undefined);
-      }
-      saleProceeds = ngnToUsdc(result.order?.amount ?? result.amount ?? pos.amount_ngn);
+      const result = await sellBaysePosition({
+        eventId,
+        marketId,
+        outcomeId,
+        amountNgn: pos.cost > 0 ? pos.cost : pos.balance * pos.averagePrice * 100,
+        shares: pos.balance,
+        keys: { pub: userKeys.publicKey, sec: userKeys.secretKey },
+      });
+      const proceedsNgn = result.order?.amount ?? result.amount ?? 0;
+      await ctx.reply(
+        `✅ <b>Position sold</b>\n\n${escapeHtml(pos.market.event.title)}\nProceeds: ${c(`₦${Math.round(proceedsNgn).toLocaleString()}`)} returned to your Bayse wallet.`,
+        { parse_mode: "HTML" }
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Refund if: no API keys, position not on Bayse, market closed/rejected, or no shares
-      const shouldRefund =
-        msg.includes("401") ||
-        msg.includes("404") ||
-        msg.includes("400") ||
-        msg.includes("not found") ||
-        msg.includes("not configured") ||
-        msg.includes("no_shares") ||
-        msg.includes("closed") ||
-        msg.includes("resolved");
-      if (!shouldRefund) {
-        console.error("[bayse] Sell failed:", msg);
-        await ctx.reply(`❌ Sell failed: ${escapeHtml(msg)}`, { parse_mode: "HTML" });
-        return;
-      }
-      console.warn(`[bayse] Position ${pos.id} not sellable — refunding staked amount (${msg})`);
-      saleProceeds = pos.amount_usdc;
-      isRefund = true;
+      console.error("[bayse] Sell failed:", msg);
+      await ctx.reply(`❌ Sell failed: ${escapeHtml(msg)}`, { parse_mode: "HTML" });
     }
-
-    await Promise.all([
-      creditBalance(ctx.from.id, saleProceeds, {
-        reason: isRefund ? "bayse_position_refund" : "bayse_position_sold",
-        referenceType: "bayse_position",
-        referenceId: pos.id,
-        idempotencyKey: `bayse_sell:${pos.id}`,
-      }),
-      closeBaysePosition(pos.id, saleProceeds, isRefund ? "refunded" : "sold"),
-    ]);
-
-    await ctx.reply(
-      isRefund
-        ? `↩️ <b>Position refunded</b>\n\n${escapeHtml(pos.event_title)}\nYour stake of ${c(`$${saleProceeds.toFixed(4)} USDC`)} has been returned to your wallet.`
-        : `✅ <b>Position sold</b>\n\n${escapeHtml(pos.event_title)}\nProceeds: ${c(`$${saleProceeds.toFixed(4)} USDC`)} credited to your wallet.`,
-      { parse_mode: "HTML" }
-    );
   }
 }
 
