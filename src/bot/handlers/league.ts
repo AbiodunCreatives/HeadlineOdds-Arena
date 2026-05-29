@@ -2013,7 +2013,8 @@ export async function handleStart(ctx: Context): Promise<void> {
   }
 
   const balance = await getBalance(ctx.from.id);
-  const usedTrial = await hasUsedFreeTrial(ctx.from.id).catch(() => false);
+  const isAdmin = ctx.from.id === Number(process.env.ADMIN_USER_ID);
+  const usedTrial = isAdmin ? false : await hasUsedFreeTrial(ctx.from.id).catch(() => false);
 
   if (balance <= 0) {
     if (!usedTrial) {

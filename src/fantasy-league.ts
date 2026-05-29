@@ -339,6 +339,7 @@ function buildLiveRoundPromptText(state: PromptState): string {
     : [];
   return [
     `⚡ ROUND ${state.roundNumber}  •  LIVE`,
+    ...(state.game.is_free_trial ? ["🎮 Free Trial  •  No real money at stake"] : []),
     "",
     `Will Bitcoin be above ${formatLiveRoundPromptBtcPrice(state.referencePrice)} in the next 15 mins?`,
     "",

@@ -270,6 +270,7 @@ function formatLiveRoundPromptBtcPrice(value: number | null): string {
 }
 
 function buildRoundCloseNotificationText(input: {
+  game: FantasyGame;
   roundNumber: number;
   closePrice: number | null;
   referencePrice: number | null;
@@ -289,11 +290,19 @@ function buildRoundCloseNotificationText(input: {
     : input.trade.outcome === "WIN"
       ? `Your call: ${input.trade.direction} ✓  +${formatMoney(input.trade.payout - input.trade.stake)} profit`
       : `Your call: ${input.trade.direction} ✗`;
+
+  const encouragement = input.game.is_free_trial
+    ? input.trade?.outcome === "WIN"
+      ? input.rank === 1 ? "🔥 You're leading! Keep it up." : "✅ Good call! Keep trading."
+      : input.trade === null ? "⏰ Don't miss the next round!" : "💪 Shake it off — next round is yours."
+    : null;
+
   return [
     `Round ${input.roundNumber} closed.`,
     directionLine,
     tradeLine,
     `Balance: ${formatWholeMoney(input.virtualBalance)}  ·  Rank #${input.rank} of ${input.totalParticipants}`,
+    ...(encouragement ? ["", encouragement] : []),
   ].join("\n");
 }
 
@@ -313,22 +322,36 @@ function buildFinalArenaMessage(input: {
   const payout = me?.prize_awarded ?? 0;
 
   if (input.game.is_free_trial) {
-    // Free trial arena - show potential winnings based on $100 entry fee
-    const potentialPayout = me?.place === 1 ? 460 : me?.place === 2 ? 276 : me?.place === 3 ? 184 : 0;
+    const IMAGINARY_POOL = 20;
+    const net = IMAGINARY_POOL * 0.92;
+    const imaginaryPayouts: Record<number, number> = { 1: net * 0.5, 2: net * 0.3, 3: net * 0.2 };
+
+    const freeStandings = input.leaderboard.map((entry) => {
+      const medal = entry.place === 1 ? "🥇" : entry.place === 2 ? "🥈" : entry.place === 3 ? "🥉" : "  ";
+      const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId, entry.username);
+      const payout = imaginaryPayouts[entry.place];
+      const payoutText = payout ? `$${payout.toFixed(2)}` : "—";
+      return `${medal}  ${name.padEnd(8)} ${formatWholeMoney(entry.virtual_balance)}   ${formatSignedPercent(getVirtualReturnPct(input.game, entry.virtual_balance))}   → ${payoutText}`;
+    });
+
+    const myPlace = me?.place ?? 0;
+    const myPayout = imaginaryPayouts[myPlace];
+
     return [
-      `🎮 Free Trial Arena ${input.game.code} — COMPLETED`,
+      `🎮 Free Trial Arena — COMPLETED`,
       "",
       `Duration: ${formatDurationHours(getGameDurationHours(input.game))}  •  ${input.roundsPlayed} rounds played`,
+      `💰 Imaginary prize pool: $${IMAGINARY_POOL}`,
       "",
-      ...standings,
+      ...freeStandings,
       "",
-      `🎁 You earned 50 HLO points for completing your first arena!`,
+      myPayout
+        ? `🏆 You finished #${myPlace} — you would have won $${myPayout.toFixed(2)}!`
+        : `You finished #${myPlace}. Top 3 share the prize pool.`,
       "",
-      potentialPayout > 0
-        ? `💰 If this was a $100 arena, you would have won $${potentialPayout}!`
-        : `💰 If this was a $100 arena, the winner would have earned $460!`,
+      `🎁 You earned 250 HLO points for completing your first arena!`,
       "",
-      `Ready to play for real money? Create or join an arena starting at just $1.`,
+      `Ready to play for real money? Entry fees start at just $0.50.`,
     ].join("\n");
   }
 
@@ -360,7 +383,7 @@ function scheduleMidRoundNudge(input: {
       try {
         const existingTrade = await getFantasyTradeForMemberEvent(input.game.id, input.member.id, input.eventId);
         if (existingTrade) return;
-        await safeSendMessage(input.member.telegram_id, buildMidRoundNudgeText(input.roundNumber), buildTradeNowKeyboard(input.game.code));
+        await safeSendMessage(input.member.telegram_id, buildMidRoundNudgeText(input.roundNumber, input.game.is_free_trial), buildTradeNowKeyboard(input.game.code));
       } catch (error) {
         console.warn(`[fantasy] Failed to send mid-round nudge for arena ${input.game.code}:`, error);
       }
@@ -369,7 +392,13 @@ function scheduleMidRoundNudge(input: {
   activeMidRoundNudges.set(key, timer);
 }
 
-function buildMidRoundNudgeText(roundNumber: number): string {
+function buildMidRoundNudgeText(roundNumber: number, isFreeTrial = false): string {
+  if (isFreeTrial) {
+    return [
+      `⏳ 7 minutes left in Round ${roundNumber} of your free trial.`,
+      "You haven't traded yet — missing rounds hurts your rank and your 250 HLO points are on the line!",
+    ].join("\n");
+  }
   return [`⏳ 7 minutes left in Round ${roundNumber}.`, "You haven't placed a trade yet — you're leaving points on the table."].join("\n");
 }
 
@@ -558,7 +587,7 @@ export async function settleFantasyLeagueTrades(): Promise<FantasyRoundSettlemen
         const rank = leaderboardRanks.get(member.telegram_id) ?? refreshedLeaderboard.length;
         const nextMissedRounds = tradeForMember ? 0 : member.consecutive_missed_rounds + 1;
         await updateFantasyMemberRoundTracking({ memberId: member.id, lastTradedRound: tradeForMember ? roundNumber : member.last_traded_round, consecutiveMissedRounds: nextMissedRounds }).catch((e) => { console.warn(`[fantasy] Failed to update settlement round tracking for ${member.telegram_id}:`, e); });
-        await safeSendMessage(member.telegram_id, buildRoundCloseNotificationText({ roundNumber, closePrice, referencePrice, resolvedDirection, trade: tradeForMember, virtualBalance: member.virtual_balance, rank, totalParticipants: refreshedLeaderboard.length }),
+        await safeSendMessage(member.telegram_id, buildRoundCloseNotificationText({ game, roundNumber, closePrice, referencePrice, resolvedDirection, trade: tradeForMember, virtualBalance: member.virtual_balance, rank, totalParticipants: refreshedLeaderboard.length }),
           tradeForMember?.outcome === "WIN"
             ? new InlineKeyboard().text("🏆 Leaderboard", `arena:board:${game.code}`).text("🏟 Lobby", "lobby")
             : new InlineKeyboard().text("🏆 Leaderboard", `arena:board:${game.code}`)
@@ -628,8 +657,10 @@ export async function finalizeFantasyGames(): Promise<void> {
       const me = refreshedLeaderboard.find((e) => e.telegram_id === member.telegram_id) ?? null;
       const leader = refreshedLeaderboard[0] ?? null;
       const shareUrl = me && leader ? buildShareResultUrl({ botUsername, entryFee: completedGame.entry_fee, finishPlace: me.place, fieldSize: refreshedLeaderboard.length, returnPct: getVirtualReturnPct(completedGame, me.virtual_balance), leaderReturnPct: getVirtualReturnPct(completedGame, leader.virtual_balance) }) : null;
-      const keyboard = new InlineKeyboard().text("▶ Play again", "arena:create");
-      if (shareUrl) keyboard.url("📤 Share result", shareUrl);
+      const keyboard = completedGame.is_free_trial
+        ? new InlineKeyboard().text("🚀 Play for Real — from $0.50", "arena:create").row().text("💳 Fund Wallet", "wallet:open")
+        : new InlineKeyboard().text("▶ Play again", "arena:create");
+      if (!completedGame.is_free_trial && shareUrl) keyboard.url("📤 Share result", shareUrl);
       await safeSendMessage(member.telegram_id, buildFinalArenaMessage({ game: completedGame, leaderboard: refreshedLeaderboard, viewerTelegramId: member.telegram_id, roundsPlayed }), keyboard);
     }));
   }
