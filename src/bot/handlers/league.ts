@@ -14,9 +14,16 @@ import {
   sharesForAmount,
   potentialPayoutNgn,
   ngnToUsdc,
+  bayseLogin,
+  bayseCreateApiKey,
   type BayseEvent,
   type BayseMarket,
 } from "../../bayse-trading.ts";
+import {
+  saveBayseCredentials,
+  getBayseCredentials,
+  deleteBayseCredentials,
+} from "../../db/bayse-credentials.ts";
 import {
   insertBaysePosition,
   getUserBaysePositions,
@@ -308,14 +315,12 @@ function buildStartWelcomeKeyboard(): InlineKeyboard {
 
 function buildFreeTrialWelcomeText(firstName: string): string {
   return [
-    "🏟 HeadlineOdds Arena",
+    `👋 Welcome, ${firstName}!`,
     "",
-    `Welcome, ${firstName}!`,
+    "HeadlineOdds Arena is a BTC prediction game.",
+    "Pick UP or DOWN every 15 minutes — best bankroll wins.",
     "",
-    "Predict BTC UP or DOWN every 15 minutes.",
-    "Best virtual bankroll at the end wins.",
-    "",
-    "🎮 Try a FREE arena — no deposit needed.",
+    "🎮 Your free game is ready — no deposit, no risk.",
     "You get $1,000 virtual funds and compete against 5 AI players.",
     "Top the leaderboard and earn 250 $HLO points.",
   ].join("\n");
@@ -323,30 +328,25 @@ function buildFreeTrialWelcomeText(firstName: string): string {
 
 function buildFreeTrialWelcomeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🔴 Live Arenas", START_LOBBY)
-    .text("⚡ Create Arena", ARENA_CREATE)
-    .text("🎮 Free Trial", ARENA_FREE_TRIAL)
+    .text("🚀 Start Free Game", ARENA_FREE_TRIAL)
     .row()
+    .text("🔴 Live Arenas", START_LOBBY)
     .text("💳 Wallet", START_WALLET)
-    .text("❓ FAQ", START_HOW_IT_WORKS)
-    .text("📊 Markets", "bm:list");
+    .text("❓ How it works", START_HOW_IT_WORKS);
 }
 
 function buildFreeTrialCreatedText(code: string): string {
   return [
-    "🎮 Free Trial Arena Created!",
+    "🎮 You're in! Free Trial Arena started.",
     "",
-    `📋 Arena Code: \`${code}\``,
-    `💰 Virtual Bankroll: \`$1,000\``,
-    `⏱️ Duration: \`1 hour\` • \`4 rounds\``,
+    `💰 Virtual Bankroll: $1,000`,
+    `⏱ Duration: 1 hour  •  4 rounds`,
     "",
-    "🤖 AI Players Already In:",
-    `• ${AGENT_DISPLAY_NAMES["aggressive"]} • ${AGENT_DISPLAY_NAMES["conservative"]} • ${AGENT_DISPLAY_NAMES["random"]}`,
-    `• ${AGENT_DISPLAY_NAMES["trend"]} • ${AGENT_DISPLAY_NAMES["contrarian"]}`,
+    "🤖 Your opponents:",
+    `${AGENT_DISPLAY_NAMES["aggressive"]}  ${AGENT_DISPLAY_NAMES["conservative"]}  ${AGENT_DISPLAY_NAMES["random"]}  ${AGENT_DISPLAY_NAMES["trend"]}  ${AGENT_DISPLAY_NAMES["contrarian"]}`,
     "",
-    `Share: https://t.me/share/url?url=Join%20my%20HeadlineOdds%20Arena%20with%20code%20${code}%20-%20no%20deposit%20needed!`,
-    "",
-    "I'll ping you when round 1 opens. Good luck! 🚀",
+    "⏳ Round 1 opens at the next 15-min mark — you'll get a ping.",
+    "Stay close, the first trade prompt is coming soon!",
   ].join("\n");
 }
 
@@ -2218,8 +2218,8 @@ export async function handleFantasyLeagueUiAction(ctx: Context): Promise<void> {
       const game = await createFreeTrialArena(ctx.from.id);
       const shareUrl = await getArenaInviteShareUrl(ctx, { code: game.code, entryFee: 0 });
       const keyboard = new InlineKeyboard();
-      if (shareUrl) keyboard.url("📤 Invite friends", shareUrl).row();
-      keyboard.text("🏟 Browse Lobby", ARENA_BACK_TO_LOBBY);
+      if (shareUrl) keyboard.url("📤 Invite a friend", shareUrl).row();
+      keyboard.text("📊 Browse Markets", "bm:list").text("❓ How it works", START_HOW_IT_WORKS);
       await editTradePromptMessage(ctx, buildFreeTrialCreatedText(game.code), keyboard);
     } catch (error) {
       console.error("[bot] Free trial arena creation failed:", error);
@@ -3806,11 +3806,23 @@ function reframeTitleWithCandidate(title: string, outcome1Label: string): string
   return `Will ${label} ${restLower}?`;
 }
 
+// Expand multi-market events into individual rows (one per candidate/outcome), capped at 6
+function expandEventMarkets(events: BayseEvent[]): { event: BayseEvent; market: BayseMarket }[] {
+  const rows: { event: BayseEvent; market: BayseMarket }[] = [];
+  for (const e of events) {
+    for (const m of e.markets) {
+      rows.push({ event: e, market: m });
+      if (rows.length >= 6) return rows;
+    }
+  }
+  return rows;
+}
+
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
   const lines = [`${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets\n`];
+  const rows = expandEventMarkets(events);
 
-  events.forEach((e, i) => {
-    const m = e.markets[0]!;
+  rows.forEach(({ event: e, market: m }, i) => {
     const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
     const liq = e.liquidity >= 1_000_000
       ? `₦${(e.liquidity / 1_000_000).toFixed(1)}M`
@@ -3830,9 +3842,9 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
   const kb = new InlineKeyboard();
+  const rows = expandEventMarkets(events);
 
-  events.forEach((e, i) => {
-    const m = e.markets[0]!;
+  rows.forEach(({ event: e, market: m }, i) => {
     const n = i + 1;
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
@@ -3971,10 +3983,11 @@ async function placeBayseMarketBet(
     return;
   }
 
-  let bayseOrderId: string;
+  let bayseOrderId: string | undefined;
   try {
-    const order = await placeBayseOrder({ eventId, marketId, outcomeId, amountNgn: ngnAmount });
-    bayseOrderId = order.order.id;
+    const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+    const order = await placeBayseOrder({ eventId, marketId, outcomeId, amountNgn: ngnAmount, keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined });
+    bayseOrderId = order.order?.id ?? (order as unknown as { id?: string }).id;
   } catch (err) {
     console.error("[bayse] Order placement failed — refunding user:", err instanceof Error ? err.message : err);
     // Refund the debit — the order never hit Bayse
@@ -4016,7 +4029,7 @@ async function placeBayseMarketBet(
     shares,
     priceNgn: Math.round(price * 100),
     payoutNgn,
-    orderId: bayseOrderId,
+    orderId: bayseOrderId ?? null,
     positionId: position.id,
   });
 
@@ -4212,8 +4225,42 @@ function buildPortfolioKeyboard(
   return kb;
 }
 
+// Sync positions from Bayse portfolio into local DB (recovers positions lost due to bot errors)
+async function syncBaysePositions(telegramId: number): Promise<void> {
+  const userKeys = await getBayseCredentials(telegramId).catch(() => null);
+  if (!userKeys) return;
+
+  const [portfolio, existing] = await Promise.all([
+    getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []),
+    getUserBaysePositions(telegramId),
+  ]);
+
+  const existingOutcomeIds = new Set(existing.map((p) => p.outcome_id));
+
+  for (const pos of portfolio) {
+    if (existingOutcomeIds.has(pos.outcomeId)) continue;
+    // Position exists on Bayse but not locally — reconstruct it
+    const amountNgn = pos.cost > 0 ? pos.cost : pos.balance * pos.averagePrice * 100;
+    await insertBaysePosition({
+      telegramId,
+      eventId: pos.market.event.id,
+      eventSlug: pos.market.event.id, // slug not available in portfolio response
+      eventTitle: pos.market.event.title,
+      marketId: pos.market.id,
+      outcomeId: pos.outcomeId,
+      outcomeLabel: pos.outcome,
+      amountNgn,
+      amountUsdc: ngnToUsdc(amountNgn),
+      shares: pos.balance,
+      priceAtBet: pos.averagePrice,
+    }).catch((e) => console.error("[bayse-sync] Failed to insert recovered position:", e));
+  }
+}
+
 export async function handlePortfolio(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  // Sync any positions that exist on Bayse but are missing locally (e.g. from prior bot errors)
+  await syncBaysePositions(ctx.from.id).catch(() => null);
   const [positions, portfolio] = await Promise.all([
     getUserBaysePositions(ctx.from.id),
     getBaysePortfolio().catch(() => [] as import("../../bayse-trading.ts").BaysePosition[]),
@@ -4259,28 +4306,38 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
     await ctx.answerCallbackQuery("Selling…");
 
     let saleProceeds = 0;
+    let isRefund = false;
     try {
+      const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
       const result = await sellBaysePosition({
         eventId: pos.event_id,
         marketId: pos.market_id,
         outcomeId: pos.outcome_id,
         shares: pos.shares,
+        keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined,
       });
-      // Bayse returns amount in NGN — convert to USDC
       saleProceeds = ngnToUsdc(result.order.amount ?? 0);
     } catch (err) {
-      console.error("[bayse] Sell failed:", err instanceof Error ? err.message : err);
-      await ctx.reply(
-        `❌ Sell failed: ${err instanceof Error ? escapeHtml(err.message) : "Bayse unavailable. Try again later."}`,
-        { parse_mode: "HTML" }
-      );
-      return;
+      const msg = err instanceof Error ? err.message : String(err);
+      // Position was never registered on Bayse (e.g. placed before API keys were set)
+      // — refund the original staked amount instead of failing
+      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured");
+      if (!notOnBayse) {
+        console.error("[bayse] Sell failed:", msg);
+        await ctx.reply(
+          `❌ Sell failed: ${escapeHtml(msg)}`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+      console.warn(`[bayse] Position ${pos.id} not on Bayse — refunding staked amount`);
+      saleProceeds = pos.amount_usdc;
+      isRefund = true;
     }
 
-    // Credit proceeds and mark position closed
     await Promise.all([
       creditBalance(ctx.from.id, saleProceeds, {
-        reason: "bayse_position_sold",
+        reason: isRefund ? "bayse_position_refund" : "bayse_position_sold",
         referenceType: "bayse_position",
         referenceId: pos.id,
         idempotencyKey: `bayse_sell:${pos.id}`,
@@ -4289,10 +4346,130 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
     ]);
 
     await ctx.reply(
-      `✅ <b>Position sold</b>\n\n` +
-      `${escapeHtml(pos.event_title)}\n` +
-      `Proceeds: ${c(`$${saleProceeds.toFixed(4)} USDC`)} credited to your wallet.`,
+      isRefund
+        ? `↩️ <b>Position refunded</b>\n\n${escapeHtml(pos.event_title)}\nYour stake of ${c(`$${saleProceeds.toFixed(4)} USDC`)} has been returned to your wallet.`
+        : `✅ <b>Position sold</b>\n\n${escapeHtml(pos.event_title)}\nProceeds: ${c(`$${saleProceeds.toFixed(4)} USDC`)} credited to your wallet.`,
       { parse_mode: "HTML" }
     );
   }
+}
+
+// ── Bayse account connect flow ────────────────────────────────────────────────
+
+const BAYSE_CONNECT_TTL = 300; // 5 min
+
+async function saveBayseConnectStep(telegramId: number, step: "email" | "password", email?: string): Promise<void> {
+  await redis.set(`bayse:connect:${telegramId}`, JSON.stringify({ step, email: email ?? "" }), "EX", BAYSE_CONNECT_TTL);
+}
+
+async function loadBayseConnectStep(telegramId: number): Promise<{ step: "email" | "password"; email: string } | null> {
+  const raw = await redis.get(`bayse:connect:${telegramId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function clearBayseConnectStep(telegramId: number): Promise<void> {
+  await redis.del(`bayse:connect:${telegramId}`);
+}
+
+export async function handleBayseConnect(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  const creds = await getBayseCredentials(ctx.from.id).catch(() => null);
+  if (creds) {
+    await ctx.reply(
+      `✅ <b>Bayse account already connected</b>\n\nYour trades use your personal Bayse account.\n\nTap below to disconnect.`,
+      {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "🔌 Disconnect", callback_data: "bayse:disconnect" }]] },
+      }
+    );
+    return;
+  }
+  await saveBayseConnectStep(ctx.from.id, "email");
+  await ctx.reply(
+    `🔗 <b>Connect your Bayse account</b>\n\nTrades will be placed directly from your own Bayse Market account.\n\n<b>Step 1/2:</b> Enter your email address:`,
+    { parse_mode: "HTML" }
+  );
+}
+
+/** Call this from the main text message handler — returns true if it consumed the message */
+export async function handleBayseConnectTextInput(ctx: Context): Promise<boolean> {
+  if (!ctx.from || !ctx.message?.text) return false;
+  const state = await loadBayseConnectStep(ctx.from.id);
+  if (!state) return false;
+
+  const text = ctx.message.text.trim();
+
+  if (state.step === "email") {
+    if (!text.includes("@")) {
+      await ctx.reply("That doesn't look like a valid email. Try again:");
+      return true;
+    }
+    await saveBayseConnectStep(ctx.from.id, "password", text);
+    await ctx.reply(
+      `<b>Step 2/2:</b> Enter your Bayse password:\n\n⚠️ <i>Your message will be deleted immediately.</i>`,
+      { parse_mode: "HTML" }
+    );
+    return true;
+  }
+
+  if (state.step === "password") {
+    // Delete the password message immediately
+    await ctx.api.deleteMessage(ctx.chat!.id, ctx.message.message_id).catch(() => null);
+    await clearBayseConnectStep(ctx.from.id);
+
+    const processingMsg = await ctx.reply("🔄 Connecting your account…");
+
+    try {
+      const { token, deviceId } = await bayseLogin(state.email, text);
+      let publicKey: string;
+      let secretKey: string;
+      try {
+        ({ publicKey, secretKey } = await bayseCreateApiKey(token, deviceId));
+      } catch (keyErr) {
+        const keyMsg = keyErr instanceof Error ? keyErr.message : String(keyErr);
+        if (keyMsg.includes("maximum")) {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            processingMsg.message_id,
+            `⚠️ <b>API key limit reached</b>\n\nYour Bayse account already has the maximum number of API keys.\n\n1. Go to <a href="https://app.bayse.markets/settings/api-keys">app.bayse.markets/settings/api-keys</a>\n2. Delete an existing key\n3. Run /connectbayse again`,
+            { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
+          );
+          return true;
+        }
+        throw keyErr;
+      }
+      await saveBayseCredentials(ctx.from.id, publicKey, secretKey);
+
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        processingMsg.message_id,
+        `✅ <b>Bayse account connected!</b>\n\nAll your trades will now use your personal Bayse account.`,
+        { parse_mode: "HTML" }
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isAuth = msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("401") || msg.toLowerCase().includes("password");
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        processingMsg.message_id,
+        isAuth
+          ? `❌ <b>Login failed</b>\n\nInvalid email or password. Use /connectbayse to try again.`
+          : `❌ <b>Connection failed</b>\n\n${escapeHtml(msg)}\n\nUse /connectbayse to try again.`,
+        { parse_mode: "HTML" }
+      );
+    }
+    return true;
+  }
+
+  return false;
+}
+
+export async function handleBayseConnectCallback(ctx: Context): Promise<void> {
+  if (!ctx.from || ctx.callbackQuery?.data !== "bayse:disconnect") return;
+  await deleteBayseCredentials(ctx.from.id);
+  await ctx.answerCallbackQuery("Disconnected.");
+  await ctx.editMessageText(
+    `🔌 <b>Bayse account disconnected.</b>\n\nTrades will use the shared account. Use /connectbayse to reconnect.`,
+    { parse_mode: "HTML" }
+  );
 }
