@@ -4310,12 +4310,19 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
     let isRefund = false;
     try {
       const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+      // Fetch live share balance from Bayse — local shares may be stale
+      let liveShares = pos.shares;
+      if (userKeys) {
+        const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+        const livePos = portfolio.find((p) => p.outcomeId === pos.outcome_id);
+        if (livePos && livePos.balance > 0) liveShares = livePos.balance;
+      }
       const result = await sellBaysePosition({
         eventId: pos.event_id,
         marketId: pos.market_id,
         outcomeId: pos.outcome_id,
         amountNgn: pos.amount_ngn,
-        shares: pos.shares,
+        shares: liveShares,
         keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined,
       });
       saleProceeds = ngnToUsdc(result.order?.amount ?? result.amount ?? pos.amount_ngn);
@@ -4323,7 +4330,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       // Position was never registered on Bayse (e.g. placed before API keys were set)
       // — refund the original staked amount instead of failing
-      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured") || msg.includes("insufficient shares");
+      const notOnBayse = msg.includes("401") || msg.includes("404") || msg.includes("not found") || msg.includes("not configured");
       if (!notOnBayse) {
         console.error("[bayse] Sell failed:", msg);
         await ctx.reply(
