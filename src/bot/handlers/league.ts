@@ -11,6 +11,7 @@ import {
   placeBayseOrder,
   sellBaysePosition,
   getBaysePortfolio,
+  getBayseWalletBalance,
   sharesForAmount,
   potentialPayoutNgn,
   ngnToUsdc,
@@ -3879,14 +3880,13 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
 
 // ── Step 3: Quote screen ──────────────────────────────────────────────────────
 
-function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no", balanceUsdc: number): string {
+function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no", balanceNgn: number): string {
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
   const sideLabel = side === "yes" ? "YES" : "NO";
   const minBet = Math.ceil(price * 100);
   const exShares = Math.floor(2000 / (price * 100));
   const hasCandidateTitle = market.title && market.title.trim() &&
     market.title.trim().toLowerCase() !== event.title.trim().toLowerCase();
-  const balanceNgn = Math.round(balanceUsdc * 1600);
 
   return [
     `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(event.title)}</b>`,
@@ -3894,7 +3894,7 @@ function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "n
     "",
     `   Buying <b>${sideLabel}</b> at ${c(formatNgnPrice(price))}/share`,
     "",
-    `   Your balance: ${c(`$${balanceUsdc.toFixed(2)} USDC`)} (≈ ${c(`₦${balanceNgn.toLocaleString()}`)})`,
+    `   Your balance: ${c(`₦${Math.round(balanceNgn).toLocaleString()}`)}`,
     "",
     `   Type a Naira amount (min ${c(`₦${minBet}`)})`,
     `   e.g. ${c("₦2,000")} → ${exShares} shares → win ${c(`₦${(exShares * 100).toLocaleString()}`)}`,
@@ -4168,10 +4168,11 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     await saveBayseBetState(ctx.from.id, { eventId, marketId, side });
     await saveBayseCustomBetPending(ctx.from.id);
 
-    const balance = await getBalance(ctx.from.id).catch(() => 0);
+    const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+    const bayseBalance = await getBayseWalletBalance(userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined).catch(() => ({ ngn: 0 }));
     await editTradePromptMessage(
       ctx,
-      buildQuoteText(event, market, side, balance),
+      buildQuoteText(event, market, side, bayseBalance.ngn),
       new InlineKeyboard().text(
         "← Back",
         `bm:cat:${FIXED_CATEGORIES.includes(normalizeCategoryKey(event.category)) ? normalizeCategoryKey(event.category) : "CRYPTO"}`
@@ -4335,22 +4336,42 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
     let isRefund = false;
     try {
       const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
-      // Fetch live share balance from Bayse — local shares may be stale
+      // Fetch live share balance from Bayse — try user keys first, then platform
       let liveShares = pos.shares;
       if (userKeys) {
         const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
         const livePos = portfolio.find((p) => p.outcomeId === pos.outcome_id);
         if (livePos && livePos.balance > 0) liveShares = livePos.balance;
       }
+      if (liveShares <= 0) {
+        // Try platform portfolio as fallback
+        const platPortfolio = await getBaysePortfolio().catch(() => []);
+        const platPos = platPortfolio.find((p) => p.outcomeId === pos.outcome_id);
+        if (platPos && platPos.balance > 0) liveShares = platPos.balance;
+      }
       if (liveShares <= 0) throw new Error("no_shares");
-      const result = await sellBaysePosition({
-        eventId: pos.event_id,
-        marketId: pos.market_id,
-        outcomeId: pos.outcome_id,
-        amountNgn: pos.amount_ngn,
-        shares: liveShares,
-        keys: userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined,
-      });
+
+      // Try selling with user keys first; if 401/404, retry with platform keys
+      // (position may have been placed via platform account before user connected)
+      const trySell = async (keys?: { pub: string; sec: string }) =>
+        sellBaysePosition({ eventId: pos.event_id, marketId: pos.market_id, outcomeId: pos.outcome_id, amountNgn: pos.amount_ngn, shares: liveShares, keys });
+
+      let result: import("../../bayse-trading.ts").BayseOrderResult;
+      if (userKeys) {
+        try {
+          result = await trySell({ pub: userKeys.publicKey, sec: userKeys.secretKey });
+        } catch (e) {
+          const m = e instanceof Error ? e.message : String(e);
+          if (m.includes("401") || m.includes("404") || m.includes("403")) {
+            // Position is in platform account — retry without user keys
+            result = await trySell(undefined);
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        result = await trySell(undefined);
+      }
       saleProceeds = ngnToUsdc(result.order?.amount ?? result.amount ?? pos.amount_ngn);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

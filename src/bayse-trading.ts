@@ -213,9 +213,9 @@ export async function sellBaysePosition(input: {
 
 // ── Get wallet balance ────────────────────────────────────────────────────────
 
-export async function getBayseWalletBalance(): Promise<{ usd: number; ngn: number }> {
+export async function getBayseWalletBalance(keys?: { pub: string; sec: string }): Promise<{ usd: number; ngn: number }> {
   const data = await request<{ assets?: { symbol: string; availableBalance: number }[] }>(
-    "GET", "/wallet/assets"
+    "GET", "/wallet/assets", undefined, keys
   );
   const assets = data.assets ?? [];
   return {
