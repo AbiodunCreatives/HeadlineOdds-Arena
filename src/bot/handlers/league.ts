@@ -3825,12 +3825,24 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
   const rows = expandEventMarkets(events);
 
   rows.forEach(({ event: e, market: m }, i) => {
-    const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
-    // If the reframed title is unchanged (reframe failed), show candidate as subtitle
+    // For multi-candidate events, m.title is the candidate/option name (e.g. "Tinubu")
+    // For single-market events, m.title duplicates e.title — use reframe in that case
     const isGenericLabel = !m.outcome1Label.trim() || /^(yes|no|true|false)$/i.test(m.outcome1Label.trim());
-    const titleLine = (reframed === e.title && !isGenericLabel)
-      ? `${escapeHtml(e.title)} — <i>${escapeHtml(m.outcome1Label)}</i>`
-      : escapeHtml(reframed);
+    const hasCandidateTitle = m.title && m.title.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase();
+
+    let titleLine: string;
+    if (hasCandidateTitle) {
+      // Multi-option market: show event question + candidate name
+      titleLine = `${escapeHtml(e.title)} — <i>${escapeHtml(m.title)}</i>`;
+    } else {
+      // Single binary market: try to reframe with outcome label
+      const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
+      const reframeFailed = reframed === e.title && !isGenericLabel;
+      titleLine = reframeFailed
+        ? `${escapeHtml(e.title)} — <i>${escapeHtml(m.outcome1Label)}</i>`
+        : escapeHtml(reframed);
+    }
+
     const liq = e.liquidity >= 1_000_000
       ? `₦${(e.liquidity / 1_000_000).toFixed(1)}M`
       : e.liquidity >= 1_000
