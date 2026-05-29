@@ -36,13 +36,13 @@ BEGIN
   )
   VALUES (
     UPPER(BTRIM(p_code)), p_creator_telegram_id, 'BTC',
-    0, ROUND(p_virtual_start_balance::NUMERIC, 2), 0,
+    20, ROUND(p_virtual_start_balance::NUMERIC, 2), 120,
     'open', p_start_at, p_end_at, TRUE
   )
   RETURNING * INTO game_row;
 
   INSERT INTO fantasy_game_members (game_id, telegram_id, entry_fee_paid, virtual_balance)
-  VALUES (game_row.id, p_creator_telegram_id, 0, ROUND(p_virtual_start_balance::NUMERIC, 2));
+  VALUES (game_row.id, p_creator_telegram_id, 20, ROUND(p_virtual_start_balance::NUMERIC, 2));
 
   RETURN NEXT game_row;
 END;
@@ -85,7 +85,7 @@ BEGIN
 
   BEGIN
     INSERT INTO fantasy_game_members (game_id, telegram_id, entry_fee_paid, virtual_balance)
-    VALUES (game_row.id, p_telegram_id, 0, game_row.virtual_start_balance);
+    VALUES (game_row.id, p_telegram_id, 20, game_row.virtual_start_balance);
   EXCEPTION
     WHEN unique_violation THEN
       RAISE EXCEPTION 'You already joined this arena.';

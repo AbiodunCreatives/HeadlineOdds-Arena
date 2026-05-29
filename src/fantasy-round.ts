@@ -322,32 +322,17 @@ function buildFinalArenaMessage(input: {
   const payout = me?.prize_awarded ?? 0;
 
   if (input.game.is_free_trial) {
-    const IMAGINARY_POOL = 20;
-    const net = IMAGINARY_POOL * 0.92;
-    const imaginaryPayouts: Record<number, number> = { 1: net * 0.5, 2: net * 0.3, 3: net * 0.2 };
-
-    const freeStandings = input.leaderboard.map((entry) => {
-      const medal = entry.place === 1 ? "🥇" : entry.place === 2 ? "🥈" : entry.place === 3 ? "🥉" : "  ";
-      const name = anonymizePlayer(entry.telegram_id, input.viewerTelegramId, entry.username);
-      const payout = imaginaryPayouts[entry.place];
-      const payoutText = payout ? `$${payout.toFixed(2)}` : "—";
-      return `${medal}  ${name.padEnd(8)} ${formatWholeMoney(entry.virtual_balance)}   ${formatSignedPercent(getVirtualReturnPct(input.game, entry.virtual_balance))}   → ${payoutText}`;
-    });
-
-    const myPlace = me?.place ?? 0;
-    const myPayout = imaginaryPayouts[myPlace];
-
     return [
       `🎮 Free Trial Arena — COMPLETED`,
       "",
       `Duration: ${formatDurationHours(getGameDurationHours(input.game))}  •  ${input.roundsPlayed} rounds played`,
-      `💰 Imaginary prize pool: $${IMAGINARY_POOL}`,
+      `💰 Prize pool: $${input.game.prize_pool.toFixed(2)} (imaginary — no real money)`,
       "",
-      ...freeStandings,
+      ...standings,
       "",
-      myPayout
-        ? `🏆 You finished #${myPlace} — you would have won $${myPayout.toFixed(2)}!`
-        : `You finished #${myPlace}. Top 3 share the prize pool.`,
+      payout > 0
+        ? `🏆 You finished #${me?.place} — you would have won ${formatMoney(payout)}!`
+        : `You finished #${me?.place}. Top 3 share the prize pool.`,
       "",
       `🎁 You earned 250 HLO points for completing your first arena!`,
       "",

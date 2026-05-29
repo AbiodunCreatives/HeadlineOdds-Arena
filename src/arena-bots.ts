@@ -217,7 +217,7 @@ export async function seedBotsIntoFreeTrialGame(game: FantasyGame): Promise<void
     const { error } = await supabase.from("fantasy_game_members").insert({
       game_id: game.id,
       telegram_id: bot.telegram_id,
-      entry_fee_paid: 0,
+      entry_fee_paid: 20,
       virtual_balance: game.virtual_start_balance,
     });
     if (error && !error.message.includes("unique")) throw error;
