@@ -29,9 +29,9 @@ async function request<T>(method: string, path: string, body?: object, keys?: { 
   const bodyStr = body ? JSON.stringify(body) : null;
   const pub = keys?.pub ?? config.BAYSE_PUBLIC_KEY;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (method === "GET") {
-    if (pub) headers["X-Public-Key"] = pub;
-  } else {
+  if (method === "GET" && (keys?.pub ?? config.BAYSE_PUBLIC_KEY)) {
+    Object.assign(headers, sign(method, path, null, keys));
+  } else if (method !== "GET") {
     Object.assign(headers, sign(method, path, bodyStr, keys));
   }
 
