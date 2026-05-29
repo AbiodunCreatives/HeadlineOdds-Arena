@@ -197,12 +197,14 @@ export async function sellBaysePosition(input: {
   marketId: string;
   outcomeId: string;
   amountNgn: number;
+  shares: number;
   keys?: { pub: string; sec: string };
 }): Promise<BayseOrderResult> {
   const path = `/pm/events/${input.eventId}/markets/${input.marketId}/orders`;
   return request<BayseOrderResult>("POST", path, {
     side: "SELL",
     outcomeId: input.outcomeId,
+    quantity: input.shares,
     amount: input.amountNgn,
     type: "MARKET",
     currency: "NGN",
