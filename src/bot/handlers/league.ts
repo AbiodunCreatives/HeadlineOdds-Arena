@@ -3793,7 +3793,8 @@ function reframeTitleWithCandidate(title: string, outcome1Label: string): string
   if (!label || /^(yes|no|true|false)$/i.test(label)) return title;
 
   // Already starts with the candidate name — don't double-inject
-  if (title.toLowerCase().includes(label.toLowerCase())) return title;
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\b${escapedLabel}\\b`, "i").test(title)) return title;
 
   // Strip leading "Who " / "Which " question words and reframe
   const stripped = title
@@ -3825,6 +3826,11 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
 
   rows.forEach(({ event: e, market: m }, i) => {
     const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
+    // If the reframed title is unchanged (reframe failed), show candidate as subtitle
+    const isGenericLabel = !m.outcome1Label.trim() || /^(yes|no|true|false)$/i.test(m.outcome1Label.trim());
+    const titleLine = (reframed === e.title && !isGenericLabel)
+      ? `${escapeHtml(e.title)} — <i>${escapeHtml(m.outcome1Label)}</i>`
+      : escapeHtml(reframed);
     const liq = e.liquidity >= 1_000_000
       ? `₦${(e.liquidity / 1_000_000).toFixed(1)}M`
       : e.liquidity >= 1_000
@@ -3832,7 +3838,7 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
       : `₦${Math.round(e.liquidity)}`;
 
     lines.push(
-      `<b>${i + 1}. ${escapeHtml(reframed)}</b>`,
+      `<b>${i + 1}. ${titleLine}</b>`,
       `YES ${c(formatNgnPrice(m.outcome1Price))}  ·  NO ${c(formatNgnPrice(m.outcome2Price))}  ·  ${c(liq)} pool`,
       ""
     );
