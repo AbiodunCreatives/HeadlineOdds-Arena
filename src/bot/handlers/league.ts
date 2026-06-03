@@ -129,7 +129,9 @@ import {
   syncFantasyWalletDeposits,
   transferTreasuryUsdc,
   createCrossChainDeposit,
+  getFantasyWalletOnChainUsdcBalance,
 } from "../../solana-wallet.ts";
+import { listFantasyWallets } from "../../db/wallets.ts";
 import { createFantasyPajCashOnramp, getBanks, confirmBankAccount, createFantasyPajCashOfframp, PAJCASH_OFFRAMP_MIN_USDC } from "../../pajcash.ts";
 import { getDextopusTokens, getDextopusDepositStatus } from "../../dextopus.ts";
 import {
@@ -3531,6 +3533,36 @@ export async function handleAdminStats(ctx: Context): Promise<void> {
     `  Withdrawals in-flight: <code>${o.withdrawalsInFlight}</code>`;
 
   await ctx.reply(text, { parse_mode: "HTML" });
+}
+
+export async function handleOnchainBalances(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
+    await ctx.reply("⛔ Unauthorized.");
+    return;
+  }
+  await ctx.reply("Fetching on-chain balances…");
+  const wallets = await listFantasyWallets();
+  if (wallets.length === 0) { await ctx.reply("No wallets found."); return; }
+
+  const results = await Promise.allSettled(
+    wallets.map((w) => getFantasyWalletOnChainUsdcBalance({ wallet: w }).then((bal) => ({ w, bal })))
+  );
+
+  const lines = results.map((r) => {
+    if (r.status === "rejected") return `❌ error`;
+    const { w, bal } = r.value;
+    return `<code>${w.telegram_id}</code>  <code>${w.owner_address.slice(0, 8)}…</code>  <b>$${bal.toFixed(2)}</b>`;
+  });
+
+  // Telegram message limit: split into chunks of 50
+  for (let i = 0; i < lines.length; i += 50) {
+    await ctx.reply(
+      `<b>On-chain USDC Balances (${i + 1}–${Math.min(i + 50, lines.length)} of ${lines.length})</b>\n\n` +
+      lines.slice(i, i + 50).join("\n"),
+      { parse_mode: "HTML" }
+    );
+  }
 }
 
 // ── Prediction Market handlers ────────────────────────────────────────────────
