@@ -186,7 +186,7 @@ export default function DashboardPage() {
           sub: "8% commission", chart: "bar", barMax: data.totalDeposits,
         },
         {
-          label: "Withdrawals In Flight", value: num(data.withdrawalsInFlight), rawValue: data.withdrawalsInFlight, color: "#f87171",
+          label: "Naira Onramp", value: `₦${num(data.withdrawalsInFlight)}`, rawValue: data.withdrawalsInFlight, color: "#f87171",
           sub: `${usd(data.totalCompletedWithdrawals)} completed`, chart: "spark",
         },
       ]

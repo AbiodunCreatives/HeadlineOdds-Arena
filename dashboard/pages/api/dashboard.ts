@@ -13,10 +13,10 @@ const totalPrizePayouts = Math.round((totalDeposits - platformRevenue) * 100) / 
 const HARDCODED: DashboardData = {
   generatedAt: new Date().toISOString(),
   totalUsers: 56,
-  fundedUsers: 10,
+  fundedUsers: 17,
   activeUsers7d: 15,
   activeUsers30d: 30,
-  liveUserBalances: 50,
+  liveUserBalances: 75,
   totalArenas: rand(25, 45),
   openArenas: 0,
   activeArenas: 0,
@@ -26,7 +26,7 @@ const HARDCODED: DashboardData = {
   totalPrizePayouts,
   platformRevenue,
   totalCompletedWithdrawals: 1,
-  withdrawalsInFlight: 4,
+  withdrawalsInFlight: 50000,
   recentArenas: [
     { code: "GHS-8PH", status: "completed", entryFee: 20, prizePool: 56,   createdAt: "2026-05-28T10:00:00Z", startAt: "2026-05-28T12:00:00Z", endAt: "2026-05-28T13:00:00Z" },
     { code: "9UZ-TDH", status: "completed", entryFee: 20, prizePool: 48,   createdAt: "2026-05-27T09:00:00Z", startAt: "2026-05-27T10:00:00Z", endAt: "2026-05-27T11:00:00Z" },
