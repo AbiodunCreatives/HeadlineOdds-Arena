@@ -3579,20 +3579,26 @@ export async function handleSweepBalances(ctx: Context): Promise<void> {
   const wallets = await listFantasyWallets();
   let swept = 0;
   let total = 0;
+  const errors: string[] = [];
 
   for (const wallet of wallets) {
     const bal = await getFantasyWalletOnChainUsdcBalance({ wallet }).catch(() => 0);
     if (bal < SWEEP_MIN_USDC) continue;
     try {
-      await transferUserUsdcToTreasury({ wallet, amount: bal });
+      const sig = await transferUserUsdcToTreasury({ wallet, amount: bal });
       swept++;
       total = Math.round((total + bal) * 1e6) / 1e6;
+      console.log(`[sweep] ${wallet.telegram_id} $${bal} → treasury. sig: ${sig}`);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sweep] Failed for ${wallet.telegram_id}:`, err);
+      errors.push(`${wallet.telegram_id} ($${bal}): ${msg.slice(0, 120)}`);
     }
   }
 
-  await ctx.reply(`Done. Swept ${swept} wallet(s) · $${total.toFixed(2)} USDC to treasury.`);
+  let reply = `Done. Swept ${swept} wallet(s) · $${total.toFixed(2)} USDC to treasury.`;
+  if (errors.length > 0) reply += `\n\n⚠️ Errors:\n${errors.join("\n")}`;
+  await ctx.reply(reply);
 }
 
 // ── Prediction Market handlers ────────────────────────────────────────────────
