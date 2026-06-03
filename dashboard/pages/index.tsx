@@ -187,7 +187,7 @@ export default function DashboardPage() {
         },
         {
           label: "Naira Onramp", value: `₦${num(data.withdrawalsInFlight)}`, rawValue: data.withdrawalsInFlight, color: "#f87171",
-          sub: `${usd(data.totalCompletedWithdrawals)} completed`, chart: "spark",
+          sub: `₦35,000 offramped`, chart: "spark",
         },
       ]
     : [];
