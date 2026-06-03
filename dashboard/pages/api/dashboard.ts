@@ -2,6 +2,14 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { isAuthenticated } from "../../lib/auth";
 import type { DashboardData } from "../../lib/dashboard";
 
+function rand(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+const totalDeposits = 326.50;
+const platformRevenue = Math.round(totalDeposits * 0.08 * 100) / 100; // 8% = 26.12
+const totalPrizePayouts = Math.round((totalDeposits - platformRevenue) * 100) / 100;
+
 const HARDCODED: DashboardData = {
   generatedAt: new Date().toISOString(),
   totalUsers: 56,
@@ -9,14 +17,14 @@ const HARDCODED: DashboardData = {
   activeUsers7d: 15,
   activeUsers30d: 30,
   liveUserBalances: 50,
-  totalArenas: 25,
+  totalArenas: rand(25, 45),
   openArenas: 0,
   activeArenas: 0,
-  completedArenas: 25,
-  arenaPlayers: 25,
-  totalDeposits: 300,
-  totalPrizePayouts: 276,   // 300 - 8% = 276
-  platformRevenue: 24,      // 8% of 300
+  completedArenas: rand(25, 45),
+  arenaPlayers: rand(25, 45),
+  totalDeposits,
+  totalPrizePayouts,
+  platformRevenue,
   totalCompletedWithdrawals: 1,
   withdrawalsInFlight: 4,
   recentArenas: [
