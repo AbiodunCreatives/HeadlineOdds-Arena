@@ -3750,13 +3750,13 @@ const BAYSE_BET_STATE_TTL = 10 * 60;
 const MARKETS_AUTO_DELETE_MS = 60_000;
 
 const CATEGORY_EMOJI: Record<string, string> = {
-  politics: "🇳🇬",
+  politics: "🗳",
   sports: "⚽",
   entertainment: "🎬",
   crypto: "₿",
-  business: "💼",
+  business: "📈",
   "social media": "📱",
-  culture: "🎭",
+  culture: "🎨",
 };
 
 // Fixed category list shown to users regardless of what Bayse returns
@@ -3806,7 +3806,7 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
 // ── Step 1: Category picker ───────────────────────────────────────────────────
 
 function buildCategoryPickerText(): string {
-  return "📊 <b>Markets</b>  ·  Pick a category:";
+  return "<b>Markets</b>  ·  Pick a category:";
 }
 
 function buildCategoryPickerKeyboard(): InlineKeyboard {
@@ -4117,19 +4117,17 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     try {
       const events = await getCachedBayseEvents();
       const wantedCategory = category.toUpperCase();
-      const shouldShuffle = wantedCategory === "SPORTS" || wantedCategory === "ENTERTAINMENT";
       const filtered = events.filter((e) =>
         normalizeCategoryKey(e.category) === wantedCategory &&
         Array.isArray(e.markets) &&
         e.markets.length > 0
       );
-      const top3 = (shouldShuffle
-        ? filtered.sort(() => Math.random() - 0.5)
-        : filtered.sort((a, b) =>
-            (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
-            (Number.isFinite(a.liquidity) ? a.liquidity : 0)
-          )
-      ).slice(0, 3);
+      const top3 = filtered
+        .sort((a, b) =>
+          (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
+          (Number.isFinite(a.liquidity) ? a.liquidity : 0)
+        )
+        .slice(0, 5);
 
       if (top3.length === 0) {
         await editTradePromptMessage(
