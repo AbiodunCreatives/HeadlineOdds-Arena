@@ -13,7 +13,9 @@ import {
 import {
   Connection,
   Keypair,
+  LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
@@ -340,6 +342,20 @@ export async function transferUserUsdcToTreasury(input: {
   const treasuryAta = await ensureTreasuryUsdcAta();
   const userAta = new PublicKey(input.wallet.usdc_ata);
   const decimals = await getUsdcDecimals();
+
+  // Ensure user wallet has enough SOL for tx fees (~5000 lamports is plenty)
+  const FEE_LAMPORTS = 5_000;
+  const userSolBalance = await getConnection().getBalance(userSigner.publicKey, SOLANA_COMMITMENT);
+  if (userSolBalance < FEE_LAMPORTS) {
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: treasury.publicKey,
+        toPubkey: userSigner.publicKey,
+        lamports: FEE_LAMPORTS,
+      })
+    );
+    await sendAndConfirmTransaction(getConnection(), fundTx, [treasury], { commitment: SOLANA_COMMITMENT });
+  }
 
   const tx = new Transaction().add(
     createTransferCheckedInstruction(
