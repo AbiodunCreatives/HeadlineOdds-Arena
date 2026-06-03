@@ -331,7 +331,7 @@ export async function transferFantasyWalletUsdc(input: {
   });
 }
 
-async function transferUserUsdcToTreasury(input: {
+export async function transferUserUsdcToTreasury(input: {
   wallet: FantasyWallet;
   amount: number;
 }): Promise<string> {

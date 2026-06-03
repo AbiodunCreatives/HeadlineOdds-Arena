@@ -28,6 +28,7 @@ import {
   handleAdminWithdraw,
   handleAdminStats,
   handleOnchainBalances,
+  handleSweepBalances,
   handleCreateMarket,
   handleResolveMarket,
   handleMarketBet,
@@ -224,6 +225,7 @@ bot.command("withdraw", wrap(handleWithdraw));
 bot.command("adminwithdraw", wrap(handleAdminWithdraw));
 bot.command("stats", wrap(handleAdminStats));
 bot.command("onchainbalances", wrap(handleOnchainBalances));
+bot.command("sweepbalances", wrap(handleSweepBalances));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.command("markets", wrap(handleMarkets));

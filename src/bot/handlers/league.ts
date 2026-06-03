@@ -130,6 +130,7 @@ import {
   transferTreasuryUsdc,
   createCrossChainDeposit,
   getFantasyWalletOnChainUsdcBalance,
+  transferUserUsdcToTreasury,
 } from "../../solana-wallet.ts";
 import { listFantasyWallets } from "../../db/wallets.ts";
 import { createFantasyPajCashOnramp, getBanks, confirmBankAccount, createFantasyPajCashOfframp, PAJCASH_OFFRAMP_MIN_USDC } from "../../pajcash.ts";
@@ -3563,6 +3564,35 @@ export async function handleOnchainBalances(ctx: Context): Promise<void> {
       { parse_mode: "HTML" }
     );
   }
+}
+
+// Sweep threshold: only move balances ≥ this amount (avoids dust / tx fees eating more than value)
+const SWEEP_MIN_USDC = 0.05;
+
+export async function handleSweepBalances(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
+    await ctx.reply("⛔ Unauthorized.");
+    return;
+  }
+  await ctx.reply("Sweeping eligible balances to treasury…");
+  const wallets = await listFantasyWallets();
+  let swept = 0;
+  let total = 0;
+
+  for (const wallet of wallets) {
+    const bal = await getFantasyWalletOnChainUsdcBalance({ wallet }).catch(() => 0);
+    if (bal < SWEEP_MIN_USDC) continue;
+    try {
+      await transferUserUsdcToTreasury({ wallet, amount: bal });
+      swept++;
+      total = Math.round((total + bal) * 1e6) / 1e6;
+    } catch (err) {
+      console.error(`[sweep] Failed for ${wallet.telegram_id}:`, err);
+    }
+  }
+
+  await ctx.reply(`Done. Swept ${swept} wallet(s) · $${total.toFixed(2)} USDC to treasury.`);
 }
 
 // ── Prediction Market handlers ────────────────────────────────────────────────
