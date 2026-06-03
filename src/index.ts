@@ -26,6 +26,7 @@ import {
   handleWithdraw,
   handleWallet,
   handleAdminWithdraw,
+  handleAdminStats,
   handleCreateMarket,
   handleResolveMarket,
   handleMarketBet,
@@ -34,6 +35,7 @@ import {
   handleMarkets,
   handleMarketsCallback,
   handleBayseCustomBetInput,
+  handleBayseSlTpInput,
   handlePortfolio,
   handlePortfolioCallback,
   handleBayseConnect,
@@ -54,6 +56,8 @@ import {
 import {
   startBayseSettlementMonitor,
   stopBayseSettlementMonitor,
+  startSlTpMonitor,
+  stopSlTpMonitor,
 } from "./bayse-settlement.ts";
 import {
   startSolanaWalletMonitor,
@@ -217,16 +221,19 @@ bot.command("fundngn", wrap(handleFundNgn));
 bot.command("offrampngn", wrap(handleOfframpNgn));
 bot.command("withdraw", wrap(handleWithdraw));
 bot.command("adminwithdraw", wrap(handleAdminWithdraw));
+bot.command("stats", wrap(handleAdminStats));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.command("markets", wrap(handleMarkets));
 bot.command("portfolio", wrap(handlePortfolio));
 bot.command("connectbayse", wrap(handleBayseConnect));
-bot.callbackQuery("bayse:disconnect", wrap(handleBayseConnectCallback));
+bot.callbackQuery(/^bayse:disconnect/, wrap(handleBayseConnectCallback));
 bot.callbackQuery(/^pm:(yes|no):/, wrap(handleMarketBet));
 bot.callbackQuery(/^pma:/, wrap(handleMarketBetAmount));
 bot.callbackQuery(/^bm:portfolio/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:sell:/, wrap(handlePortfolioCallback));
+bot.callbackQuery(/^bm:setsl:/, wrap(handlePortfolioCallback));
+bot.callbackQuery(/^bm:settp:/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:/, wrap(handleMarketsCallback));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
@@ -244,6 +251,9 @@ bot.on("message:text", async (ctx, next) => {
 
   // Bayse market custom bet amount
   if (await handleBayseCustomBetInput(ctx)) return;
+
+  // Bayse SL/TP text input
+  if (await handleBayseSlTpInput(ctx)) return;
 
   // Plain-text messages that aren't commands or handled inputs go to support agent
   const text = ctx.message?.text ?? "";
@@ -594,6 +604,7 @@ async function shutdown(signal: string): Promise<void> {
   stopFantasyMonitor();
   stopFantasySettlementMonitor();
   stopBayseSettlementMonitor();
+  stopSlTpMonitor();
   stopSolanaWalletMonitor();
 
   await new Promise<void>((resolve) => {
@@ -696,6 +707,10 @@ async function main(): Promise<void> {
       command: "markets",
       description: "Browse live prediction markets",
     },
+    {
+      command: "portfolio",
+      description: "View your open Bayse market positions",
+    },
   ]);
 
   const tradeMenuUrl = config.ARENA_URL ? `${config.ARENA_URL}/trade` : null;
@@ -722,6 +737,7 @@ async function main(): Promise<void> {
   startFantasySettlementMonitor();
   startSolanaWalletMonitor();
   startBayseSettlementMonitor();
+  startSlTpMonitor();
 
   if (config.WEBHOOK_URL) {
     const webhookUrl = `${config.WEBHOOK_URL}/webhook/${config.WEBHOOK_PATH_SECRET}`;

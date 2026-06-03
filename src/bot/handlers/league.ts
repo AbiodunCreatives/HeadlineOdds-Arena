@@ -29,6 +29,7 @@ import {
   insertBaysePosition,
   getUserBaysePositions,
   closeBaysePosition,
+  setBaysePositionSlTp,
 } from "../../bayse-settlement.ts";
 import { supabase } from "../../db/client.ts";
 import { getDashboardSummary } from "../../db/dashboard.ts";
@@ -3862,55 +3863,34 @@ function expandEventMarkets(events: BayseEvent[]): { event: BayseEvent; market: 
 }
 
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
-  const lines = [`${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets\n`];
-  const rows = expandEventMarkets(events);
-
-  rows.forEach(({ event: e, market: m }, i) => {
-    // For multi-candidate events, m.title is the candidate/option name (e.g. "Tinubu")
-    // For single-market events, m.title duplicates e.title — use reframe in that case
-    const isGenericLabel = !m.outcome1Label.trim() || /^(yes|no|true|false)$/i.test(m.outcome1Label.trim());
-    const hasCandidateTitle = m.title && m.title.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase();
-
-    let titleLine: string;
-    if (hasCandidateTitle) {
-      // Multi-option market: show event question + candidate name
-      titleLine = `${escapeHtml(e.title)} — <i>${escapeHtml(m.title)}</i>`;
-    } else {
-      // Single binary market: try to reframe with outcome label
-      const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
-      const reframeFailed = reframed === e.title && !isGenericLabel;
-      titleLine = reframeFailed
-        ? `${escapeHtml(e.title)} — <i>${escapeHtml(m.outcome1Label)}</i>`
-        : escapeHtml(reframed);
-    }
-
-    const liq = e.liquidity >= 1_000_000
-      ? `₦${(e.liquidity / 1_000_000).toFixed(1)}M`
-      : e.liquidity >= 1_000
-      ? `₦${Math.round(e.liquidity / 1_000)}K`
-      : `₦${Math.round(e.liquidity)}`;
-
-    lines.push(
-      `<b>${i + 1}. ${titleLine}</b>`,
-      `YES ${c(formatNgnPrice(m.outcome1Price))}  ·  NO ${c(formatNgnPrice(m.outcome2Price))}  ·  ${c(liq)} pool`,
-      ""
-    );
-  });
-
-  return lines.join("\n").trim();
+  return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
 }
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   const rows = expandEventMarkets(events);
 
-  rows.forEach(({ event: e, market: m }, i) => {
-    const n = i + 1;
+  rows.forEach(({ event: e, market: m }) => {
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
 
-    kb.text(`${n} · YES ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`${n} · NO ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    const isGenericLabel = !m.outcome1Label.trim() || /^(yes|no|true|false)$/i.test(m.outcome1Label.trim());
+    const hasCandidateTitle = m.title && m.title.trim() &&
+      m.title.trim().toLowerCase() !== e.title.trim().toLowerCase();
+
+    let titleLine: string;
+    if (hasCandidateTitle) {
+      titleLine = `${e.title.slice(0, 30)} — ${m.title.slice(0, 20)}`;
+    } else {
+      const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
+      titleLine = (reframed !== e.title || isGenericLabel) ? reframed : `${e.title} — ${m.outcome1Label}`;
+    }
+
+    // Market title row (plain text button, no-op callback)
+    kb.text(`📌 ${titleLine.slice(0, 55)}`, `bm:noop`).row();
+    // YES / NO buttons on the next row
+    kb.text(`✅ YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`❌ NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
   });
 
@@ -4129,24 +4109,27 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  if (data === "bm:noop") { await ctx.answerCallbackQuery(); return; }
+
   // ── Category selected → show top 3 markets ────────────────────────────────
   if (data.startsWith("bm:cat:")) {
     const category = normalizeCategoryKey(data.slice("bm:cat:".length));
     try {
       const events = await getCachedBayseEvents();
       const wantedCategory = category.toUpperCase();
-      const top3 = events
-        .filter((e) =>
-          normalizeCategoryKey(e.category) === wantedCategory &&
-          Array.isArray(e.markets) &&
-          e.markets.length > 0
-        )
-        .sort(
-          (a, b) =>
+      const shouldShuffle = wantedCategory === "SPORTS" || wantedCategory === "ENTERTAINMENT";
+      const filtered = events.filter((e) =>
+        normalizeCategoryKey(e.category) === wantedCategory &&
+        Array.isArray(e.markets) &&
+        e.markets.length > 0
+      );
+      const top3 = (shouldShuffle
+        ? filtered.sort(() => Math.random() - 0.5)
+        : filtered.sort((a, b) =>
             (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
             (Number.isFinite(a.liquidity) ? a.liquidity : 0)
-        )
-        .slice(0, 3);
+          )
+      ).slice(0, 3);
 
       if (top3.length === 0) {
         await editTradePromptMessage(
@@ -4228,6 +4211,52 @@ export async function handleBayseCustomBetInput(ctx: Context): Promise<boolean> 
   return true;
 }
 
+export async function handleBayseSlTpInput(ctx: Context): Promise<boolean> {
+  if (!ctx.from) return false;
+  const raw = await redis.get(`bayse:sltp:${ctx.from.id}`).catch(() => null);
+  if (!raw) return false;
+
+  const { positionId, type } = JSON.parse(raw) as { positionId: string; type: "sl" | "tp" };
+  await redis.del(`bayse:sltp:${ctx.from.id}`).catch(() => null);
+
+  const input = (ctx.message?.text ?? "").replace(/[^0-9.]/g, "");
+  const pct = Number.parseFloat(input);
+
+  if (!Number.isFinite(pct) || pct < 0) {
+    await ctx.reply("Invalid value. Send a number like <code>70</code> for 70%, or <code>0</code> to clear.", { parse_mode: "HTML" });
+    return true;
+  }
+
+  const price = pct === 0 ? null : pct / 100;
+
+  if (price !== null && (price <= 0 || price > 10)) {
+    await ctx.reply("Value must be between 1% and 1000%. Try again.", { parse_mode: "HTML" });
+    return true;
+  }
+
+  try {
+    const positions = await getUserBaysePositions(ctx.from.id).catch(() => []);
+    const pos = positions.find((p) => p.id === positionId);
+    await setBaysePositionSlTp(
+      positionId,
+      type === "sl" ? price : (pos?.stop_loss_price ?? null),
+      type === "tp" ? price : (pos?.take_profit_price ?? null)
+    );
+
+    const label = type === "sl" ? "Stop Loss" : "Take Profit";
+    await ctx.reply(
+      price === null
+        ? `🗑 <b>${label} cleared.</b>`
+        : `✅ <b>${label} set to ${pct.toFixed(0)}%</b>\n\nYour position will auto-sell when its value ${type === "sl" ? "drops to" : "rises to"} ${pct.toFixed(0)}% of your entry cost.`,
+      { parse_mode: "HTML" }
+    );
+  } catch (err) {
+    console.error("[sl-tp] Failed to save:", err);
+    await ctx.reply("Failed to save. Please try again.");
+  }
+  return true;
+}
+
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 
 function buildPortfolioText(
@@ -4252,8 +4281,10 @@ function buildPortfolioText(
 
 function buildPortfolioKeyboard(
   positions: import("../../bayse-trading.ts").BaysePosition[],
-  sellKeys: Map<string, string>  // outcomeId → short redis key
+  sellKeys: Map<string, string>,  // outcomeId → short redis key
+  localPositions: import("../../bayse-settlement.ts").BaysePositionRow[] = []
 ): import("grammy").InlineKeyboard {
+  const localByOutcomeId = new Map(localPositions.map((p) => [p.outcome_id, p]));
   const kb = new InlineKeyboard();
   for (const pos of positions) {
     if (pos.balance > 0 && pos.market?.event?.id) {
@@ -4261,6 +4292,17 @@ function buildPortfolioKeyboard(
       const label = `Sell — ${pos.outcome} ${title.slice(0, 20)}`;
       const shortKey = sellKeys.get(pos.outcomeId) ?? pos.outcomeId;
       kb.text(label, `bm:sell:${shortKey}`).row();
+
+      const local = localByOutcomeId.get(pos.outcomeId);
+      if (local) {
+        const slLabel = local.stop_loss_price !== null
+          ? `🛑 SL: ${(local.stop_loss_price * 100).toFixed(0)}%`
+          : `🛑 Set SL`;
+        const tpLabel = local.take_profit_price !== null
+          ? `✅ TP: ${(local.take_profit_price * 100).toFixed(0)}%`
+          : `✅ Set TP`;
+        kb.text(slLabel, `bm:setsl:${local.id.slice(0, 8)}`).text(tpLabel, `bm:settp:${local.id.slice(0, 8)}`).row();
+      }
     }
   }
   kb.text("🔄 Refresh", "bm:portfolio").row();
@@ -4328,11 +4370,14 @@ export async function handlePortfolio(ctx: Context): Promise<void> {
     );
     return;
   }
-  const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+  const [portfolio, localPositions] = await Promise.all([
+    getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []),
+    getUserBaysePositions(ctx.from.id).catch(() => []),
+  ]);
   const sellKeys = await storeSellKeys(portfolio);
   await ctx.reply(buildPortfolioText(portfolio), {
     parse_mode: "HTML",
-    reply_markup: buildPortfolioKeyboard(portfolio, sellKeys),
+    reply_markup: buildPortfolioKeyboard(portfolio, sellKeys, localPositions),
   });
 }
 
@@ -4347,9 +4392,12 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       await ctx.answerCallbackQuery("Link your Bayse account first — use /connectbayse");
       return;
     }
-    const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+    const [portfolio, localPositions] = await Promise.all([
+      getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []),
+      getUserBaysePositions(ctx.from.id).catch(() => []),
+    ]);
     const sellKeys = await storeSellKeys(portfolio);
-    await editTradePromptMessage(ctx, buildPortfolioText(portfolio), buildPortfolioKeyboard(portfolio, sellKeys), "HTML");
+    await editTradePromptMessage(ctx, buildPortfolioText(portfolio), buildPortfolioKeyboard(portfolio, sellKeys, localPositions), "HTML");
     return;
   }
 
@@ -4416,6 +4464,37 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       console.error("[bayse] Sell failed:", err instanceof Error ? err.message : err);
       await ctx.reply(`❌ ${friendlyBayseError(err)}`, { parse_mode: "HTML" });
     }
+  }
+
+  // ── Set Stop Loss ──────────────────────────────────────────────────────────
+  if (data.startsWith("bm:setsl:") || data.startsWith("bm:settp:")) {
+    const isSlot = data.startsWith("bm:setsl:");
+    const shortId = data.slice(isSlot ? "bm:setsl:".length : "bm:settp:".length);
+    const localPositions = await getUserBaysePositions(ctx.from.id).catch(() => []);
+    const local = localPositions.find((p) => p.id.startsWith(shortId));
+    if (!local) { await ctx.answerCallbackQuery("Position not found. Refresh and try again."); return; }
+
+    await redis.set(
+      `bayse:sltp:${ctx.from.id}`,
+      JSON.stringify({ positionId: local.id, type: isSlot ? "sl" : "tp" }),
+      "EX", 120
+    ).catch(() => null);
+
+    const currentValue = isSlot ? local.stop_loss_price : local.take_profit_price;
+    const typeLabel = isSlot ? "Stop Loss" : "Take Profit";
+    const hint = isSlot
+      ? "Enter a % (e.g. <code>70</code> = exit if value drops to 70% of cost)"
+      : "Enter a % (e.g. <code>150</code> = exit if value rises to 150% of cost)";
+
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `🎯 <b>Set ${typeLabel}</b>\n\n` +
+      `Market: <i>${escapeHtml(local.event_title)}</i>\n` +
+      (currentValue !== null ? `Current: ${(currentValue * 100).toFixed(0)}%\n\n` : "\n") +
+      hint + `\n\nOr send <code>0</code> to clear.`,
+      { parse_mode: "HTML" }
+    );
+    return;
   }
 }
 

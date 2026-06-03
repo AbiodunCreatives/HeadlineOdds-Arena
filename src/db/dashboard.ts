@@ -15,6 +15,11 @@ interface DepositDashboardRow {
   created_at: string;
 }
 
+interface PajCashOnrampRow {
+  actual_usdc_amount: number | string | null;
+  completed_at: string | null;
+}
+
 interface EntryDashboardRow {
   entry_fee_paid: number | string | null;
   joined_at: string;
@@ -65,6 +70,7 @@ export interface DashboardSummary {
     liveUserBalances: number;
     totalDeposits: number;
     totalEntryVolume: number;
+    totalPaidEntryVolume: number;
     totalValueProcessed: number;
     totalPlatformRevenue: number;
     totalPrizePayouts: number;
@@ -74,9 +80,11 @@ export interface DashboardSummary {
     newUsers: number;
     deposits: number;
     entryVolume: number;
+    paidEntryVolume: number;
     valueProcessed: number;
     platformRevenue: number;
     completedWithdrawals: number;
+    prizePayouts: number;
   };
   operations: {
     openGames: number;
@@ -257,6 +265,7 @@ export async function getDashboardSummary(
   const [
     userRows,
     depositRows,
+    pajcashRows,
     entryRows,
     revenueRows,
     payoutRows,
@@ -279,6 +288,14 @@ export async function getDashboardSummary(
         .select("amount, created_at")
         .order("created_at", { ascending: true })
     ),
+    fetchAllRows<PajCashOnrampRow>(() =>
+      supabase
+        .from("fantasy_pajcash_onramps")
+        .select("actual_usdc_amount, completed_at")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+        .order("completed_at", { ascending: true })
+    ),
     fetchAllRows<EntryDashboardRow>(() =>
       supabase
         .from("fantasy_game_members")
@@ -295,6 +312,7 @@ export async function getDashboardSummary(
       supabase
         .from("fantasy_payouts")
         .select("amount, created_at")
+        .eq("prize_transfer_status", "confirmed")
         .order("created_at", { ascending: true })
     ),
     fetchAllRows<WithdrawalDashboardRow>(() =>
@@ -353,9 +371,16 @@ export async function getDashboardSummary(
   const liveUserBalances = sumValues(userRows, (row) =>
     parseMoney(row.wallet_balance)
   );
-  const totalDeposits = sumValues(depositRows, (row) => parseMoney(row.amount));
+  const totalDeposits = roundMoney(
+    sumValues(depositRows, (row) => parseMoney(row.amount)) +
+    sumValues(pajcashRows, (row) => parseMoney(row.actual_usdc_amount))
+  );
   const totalEntryVolume = sumValues(entryRows, (row) =>
     parseMoney(row.entry_fee_paid)
+  );
+  const totalPaidEntryVolume = sumValues(
+    entryRows.filter((row) => parseMoney(row.entry_fee_paid) > 0),
+    (row) => parseMoney(row.entry_fee_paid)
   );
   const totalPlatformRevenue = sumValues(revenueRows, (row) =>
     parseMoney(row.amount)
@@ -378,6 +403,10 @@ export async function getDashboardSummary(
 
   for (const row of depositRows) {
     safeIncrement(seriesIndex, row.created_at, "deposits", parseMoney(row.amount));
+  }
+
+  for (const row of pajcashRows) {
+    safeIncrement(seriesIndex, row.completed_at, "deposits", parseMoney(row.actual_usdc_amount));
   }
 
   for (const row of entryRows) {
@@ -415,6 +444,13 @@ export async function getDashboardSummary(
     entryVolume: roundMoney(
       series.reduce((total, point) => total + point.entryVolume, 0)
     ),
+    paidEntryVolume: roundMoney(
+      payoutRows.length >= 0  // just a way to compute from entryRows in range window
+        ? entryRows
+            .filter((row) => parseMoney(row.entry_fee_paid) > 0 && Date.parse(row.joined_at) >= seriesStartMs)
+            .reduce((total, row) => total + parseMoney(row.entry_fee_paid), 0)
+        : 0
+    ),
     valueProcessed: roundMoney(
       series.reduce((total, point) => total + point.entryVolume, 0)
     ),
@@ -423,6 +459,11 @@ export async function getDashboardSummary(
     ),
     completedWithdrawals: roundMoney(
       series.reduce((total, point) => total + point.completedWithdrawals, 0)
+    ),
+    prizePayouts: roundMoney(
+      payoutRows
+        .filter((row) => Date.parse(row.created_at) >= seriesStartMs)
+        .reduce((total, row) => total + parseMoney(row.amount), 0)
     ),
   };
 
@@ -436,6 +477,7 @@ export async function getDashboardSummary(
       liveUserBalances,
       totalDeposits,
       totalEntryVolume,
+      totalPaidEntryVolume,
       totalValueProcessed: totalEntryVolume,
       totalPlatformRevenue,
       totalPrizePayouts,

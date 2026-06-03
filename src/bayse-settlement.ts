@@ -1,6 +1,7 @@
 import { supabase } from "./db/client.ts";
 import { creditBalance } from "./db/balances.ts";
-import { getBaysePortfolio, ngnToUsdc } from "./bayse-trading.ts";
+import { getBaysePortfolio, sellBaysePosition, ngnToUsdc } from "./bayse-trading.ts";
+import { getBayseCredentials } from "./db/bayse-credentials.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -22,6 +23,8 @@ export interface BaysePositionRow {
   status: "pending" | "open" | "won" | "lost" | "sold" | "refunded";
   payout_ngn: number | null;
   payout_usdc: number | null;
+  stop_loss_price: number | null;    // probability (0–1); sell if currentValue/cost drops below this
+  take_profit_price: number | null;  // probability (0–1); sell if currentValue/cost rises above this
   created_at: string;
   settled_at: string | null;
 }
@@ -97,6 +100,18 @@ export async function closeBaysePosition(
     .eq("id", positionId);
 }
 
+export async function setBaysePositionSlTp(
+  positionId: string,
+  stopLossPrice: number | null,
+  takeProfitPrice: number | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("bayse_positions")
+    .update({ stop_loss_price: stopLossPrice, take_profit_price: takeProfitPrice })
+    .eq("id", positionId);
+  if (error) throw error;
+}
+
 async function settlePosition(
   position: BaysePositionRow,
   outcome: "won" | "lost",
@@ -124,6 +139,98 @@ async function settlePosition(
     .eq("id", position.id);
 }
 
+// ── SL/TP monitor ─────────────────────────────────────────────────────────────
+
+let slTpMonitorRunning = false;
+let slTpMonitorTimer: NodeJS.Timeout | null = null;
+const SL_TP_POLL_INTERVAL_MS = 3 * 60 * 1000; // every 3 minutes
+
+async function runSlTpTick(): Promise<void> {
+  // Only check positions that actually have SL or TP set
+  const { data, error } = await supabase
+    .from("bayse_positions")
+    .select("*")
+    .in("status", ["open"])
+    .or("stop_loss_price.not.is.null,take_profit_price.not.is.null");
+  if (error) throw error;
+  const positions = (data ?? []) as BaysePositionRow[];
+  if (positions.length === 0) return;
+
+  const byUser = new Map<number, BaysePositionRow[]>();
+  for (const pos of positions) {
+    const list = byUser.get(pos.telegram_id) ?? [];
+    list.push(pos);
+    byUser.set(pos.telegram_id, list);
+  }
+
+  for (const [telegramId, userPositions] of byUser) {
+    const userKeys = await getBayseCredentials(telegramId).catch(() => null);
+    if (!userKeys) continue;
+
+    const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+    const portfolioByOutcome = new Map(portfolio.map((p) => [p.outcomeId, p]));
+
+    for (const position of userPositions) {
+      const live = portfolioByOutcome.get(position.outcome_id);
+      if (!live || live.balance <= 0 || live.cost <= 0) continue;
+
+      // Ratio of current value to cost (>1 means profit, <1 means loss)
+      const ratio = live.currentValue / live.cost;
+
+      const hitSl = position.stop_loss_price !== null && ratio <= position.stop_loss_price;
+      const hitTp = position.take_profit_price !== null && ratio >= position.take_profit_price;
+
+      if (!hitSl && !hitTp) continue;
+
+      const trigger = hitSl ? "stop-loss" : "take-profit";
+      console.log(`[sl-tp] ${trigger} triggered for position ${position.id} (ratio=${ratio.toFixed(4)})`);
+
+      try {
+        const sellAmountNgn = live.currentValue > 0 ? live.currentValue : live.cost;
+        const result = await sellBaysePosition({
+          eventId: live.market.event.id,
+          marketId: live.market.id,
+          outcomeId: live.outcomeId,
+          amountNgn: sellAmountNgn,
+          shares: live.balance,
+          keys: { pub: userKeys.publicKey, sec: userKeys.secretKey },
+        });
+        const proceedsNgn = result.order?.amount ?? result.amount ?? sellAmountNgn;
+        await closeBaysePosition(position.id, ngnToUsdc(proceedsNgn), "sold");
+        console.log(`[sl-tp] Sold position ${position.id} via ${trigger}. Proceeds: ₦${proceedsNgn}`);
+        void sendAdminAlert(
+          `[sl-tp] ${trigger.toUpperCase()} fired for user ${telegramId} on "${position.event_title}". Proceeds: ₦${Math.round(proceedsNgn)}`
+        );
+      } catch (err) {
+        console.error(`[sl-tp] Failed to sell position ${position.id}:`, err);
+        void sendAdminAlert(
+          `[sl-tp] Failed to sell position ${position.id} for user ${telegramId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  }
+}
+
+export function startSlTpMonitor(): void {
+  if (slTpMonitorRunning) return;
+  slTpMonitorRunning = true;
+
+  const tick = async () => {
+    try { await runSlTpTick(); } catch (err) {
+      console.error("[sl-tp] Tick failed:", err);
+    }
+    if (slTpMonitorRunning) slTpMonitorTimer = setTimeout(tick, SL_TP_POLL_INTERVAL_MS);
+  };
+
+  void tick();
+  console.log("[sl-tp] Monitor started (3m interval).");
+}
+
+export function stopSlTpMonitor(): void {
+  slTpMonitorRunning = false;
+  if (slTpMonitorTimer) { clearTimeout(slTpMonitorTimer); slTpMonitorTimer = null; }
+}
+
 // ── Settlement monitor ────────────────────────────────────────────────────────
 
 let monitorRunning = false;
@@ -134,35 +241,46 @@ async function runSettlementTick(): Promise<void> {
   const openPositions = await getOpenBaysePositions();
   if (openPositions.length === 0) return;
 
-  const portfolio = await getBaysePortfolio();
-  // Index by outcomeId — that's what we store in bayse_positions
-  const portfolioByOutcome = new Map(portfolio.map((p) => [p.outcomeId, p]));
+  // Group positions by telegram_id so we fetch each user's portfolio once with their own keys
+  const byUser = new Map<number, BaysePositionRow[]>();
+  for (const pos of openPositions) {
+    const list = byUser.get(pos.telegram_id) ?? [];
+    list.push(pos);
+    byUser.set(pos.telegram_id, list);
+  }
 
-  for (const position of openPositions) {
-    const entry = portfolioByOutcome.get(position.outcome_id);
-    if (!entry) continue;
+  for (const [telegramId, positions] of byUser) {
+    const userKeys = await getBayseCredentials(telegramId).catch(() => null);
+    // Skip users with no stored keys — we cannot check their portfolio
+    if (!userKeys) {
+      console.warn(`[bayse-settlement] No keys for user ${telegramId}, skipping ${positions.length} position(s)`);
+      continue;
+    }
 
-    // A position is resolved when payoutIfOutcomeWins is non-zero and cost is 0
-    // (Bayse settles by zeroing cost and setting payout). Use market event engine
-    // to detect resolution — simplest signal: payout > 0 means won, check if
-    // the market is no longer open by re-fetching would be ideal, but we use
-    // the portfolio payout field as the oracle.
-    const isResolved = entry.payoutIfOutcomeWins > 0 && entry.currentValue === 0;
-    if (!isResolved) continue;
+    const portfolio = await getBaysePortfolio({ pub: userKeys.publicKey, sec: userKeys.secretKey }).catch(() => []);
+    const portfolioByOutcome = new Map(portfolio.map((p) => [p.outcomeId, p]));
 
-    const won = entry.payoutIfOutcomeWins > 0;
-    const payoutNgn = won ? entry.payoutIfOutcomeWins : 0;
+    for (const position of positions) {
+      const entry = portfolioByOutcome.get(position.outcome_id);
+      if (!entry) continue;
 
-    try {
-      await settlePosition(position, won ? "won" : "lost", payoutNgn);
-      console.log(
-        `[bayse-settlement] Settled position ${position.id} for user ${position.telegram_id}: ${won ? "WON" : "LOST"} ₦${payoutNgn}`
-      );
-    } catch (err) {
-      console.error(`[bayse-settlement] Failed to settle position ${position.id}:`, err);
-      void sendAdminAlert(
-        `[bayse-settlement] Failed to settle position ${position.id}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      const isResolved = entry.payoutIfOutcomeWins > 0 && entry.currentValue === 0;
+      if (!isResolved) continue;
+
+      const won = entry.payoutIfOutcomeWins > 0;
+      const payoutNgn = won ? entry.payoutIfOutcomeWins : 0;
+
+      try {
+        await settlePosition(position, won ? "won" : "lost", payoutNgn);
+        console.log(
+          `[bayse-settlement] Settled position ${position.id} for user ${telegramId}: ${won ? "WON" : "LOST"} ₦${payoutNgn}`
+        );
+      } catch (err) {
+        console.error(`[bayse-settlement] Failed to settle position ${position.id}:`, err);
+        void sendAdminAlert(
+          `[bayse-settlement] Failed to settle position ${position.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
   }
 }
