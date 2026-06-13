@@ -3949,6 +3949,17 @@ function buildCategoryMarketsText(category: string, _events: BayseEvent[]): stri
 
 // ── WC pagination helpers ────────────────────────────────────────────────────
 
+function fmtVol(liquidity: number): string {
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return "";
+  if (liquidity >= 1_000_000) return `$${(liquidity / 1_000_000).toFixed(2)}M`;
+  if (liquidity >= 1_000) return `$${Math.round(liquidity / 1_000)}K`;
+  return `$${Math.round(liquidity)}`;
+}
+
+function fmtPrice(p: number): string {
+  return `${Math.round(p * 100)}¢`;
+}
+
 function addMarketsBlock(
   kb: InlineKeyboard,
   e: BayseEvent,
@@ -3960,17 +3971,44 @@ function addMarketsBlock(
       : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : e.title.trim());
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`· ${label.slice(0, 54)}`, `bm:noop`).row();
-    kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`YES ${label.slice(0, 20)} ${fmtPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO ${label.slice(0, 20)} ${fmtPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+      .row();
+  }
+}
+
+function buildEventBlock(
+  lines: string[],
+  kb: InlineKeyboard,
+  num: number,
+  e: BayseEvent,
+  markets: BayseMarket[]
+): void {
+  const vol = fmtVol(e.liquidity);
+  lines.push(`\n${num}) 🏆 <b>${escapeHtml(e.title)}</b>${vol ? `\n├ Vol: ${vol}` : ""}`);
+  for (let i = 0; i < markets.length; i++) {
+    const m = markets[i];
+    const isLast = i === markets.length - 1;
+    const prefix = isLast ? "└" : "├";
+    const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
+      ? m.title.trim()
+      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : "Yes");
+    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+    lines.push(`${prefix} ${escapeHtml(label.slice(0, 40))} — YES ${fmtPrice(m.outcome1Price)} · NO ${fmtPrice(m.outcome2Price)}`);
+    kb.text(`YES — ${label.slice(0, 18)} ${fmtPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO — ${label.slice(0, 18)} ${fmtPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
   }
 }
 
 function buildWcPage(events: BayseEvent[], page: number): { text: string; kb: InlineKeyboard } {
   const kb = new InlineKeyboard();
+  const lines: string[] = [];
 
-  // Sort events: WC winner first by liquidity, then groups by name, then others
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" });
+  lines.push(`🌍 <b>FIFA World Cup 2026</b> — ${today}  ·  Page ${page}/3\n`);
+
   const winner = events.find((e) => /win the 2026/i.test(e.title));
   const groups = events
     .filter((e) => /group [a-z] winner/i.test(e.title))
@@ -3980,50 +4018,31 @@ function buildWcPage(events: BayseEvent[], page: number): { text: string; kb: In
   );
 
   if (page === 1) {
-    // Page 1: WC winner — top 6 countries
-    kb.text(`🏆 Who Wins the World Cup?`, `bm:noop`).row();
+    lines.push(`⚽️ <b>Who Wins the World Cup?</b>\n<i>Top contenders by odds:</i>`);
     if (winner) {
-      const top6 = [...winner.markets]
-        .sort((a, b) => b.outcome1Price - a.outcome1Price)
-        .slice(0, 6);
-      addMarketsBlock(kb, winner, top6);
+      const top6 = [...winner.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 6);
+      buildEventBlock(lines, kb, 1, winner, top6);
     }
-    kb.text(`More ›`, `bm:wc:2`);
+    kb.row().text(`More ›`, `bm:wc:2`);
   } else if (page === 2) {
-    // Page 2: Group Winners A–C (3 groups)
-    kb.text(`🏆 Group Winners — A to C`, `bm:noop`).row();
-    for (const g of groups.slice(0, 3)) {
-      const letter = (g.title.match(/group ([a-z])/i)?.[1] ?? "").toUpperCase();
-      kb.text(`Group ${letter} Winner`, `bm:noop`).row();
-      addMarketsBlock(kb, g, g.markets.slice(0, 4));
-    }
-    kb.text(`‹ Back`, `bm:wc:1`).text(`More ›`, `bm:wc:3`);
+    lines.push(`⚽️ <b>Group Winners — A to C</b>`);
+    groups.slice(0, 3).forEach((g, i) => buildEventBlock(lines, kb, i + 1, g, g.markets.slice(0, 4)));
+    kb.row().text(`‹ Back`, `bm:wc:1`).text(`More ›`, `bm:wc:3`);
   } else {
-    // Page 3: Group Winners D–F + other markets
-    kb.text(`🏆 Group Winners — D to F`, `bm:noop`).row();
-    for (const g of groups.slice(3, 6)) {
-      const letter = (g.title.match(/group ([a-z])/i)?.[1] ?? "").toUpperCase();
-      kb.text(`Group ${letter} Winner`, `bm:noop`).row();
-      addMarketsBlock(kb, g, g.markets.slice(0, 4));
-    }
+    lines.push(`⚽️ <b>Group Winners — D to F</b>`);
+    groups.slice(3, 6).forEach((g, i) => buildEventBlock(lines, kb, i + 1, g, g.markets.slice(0, 4)));
     if (others.length > 0) {
-      kb.text(`🏆 Other Markets`, `bm:noop`).row();
-      for (const e of others.slice(0, 3)) {
-        kb.text(`· ${e.title.slice(0, 54)}`, `bm:noop`).row();
+      lines.push(`\n📊 <b>Other Markets</b>`);
+      others.slice(0, 3).forEach((e, i) => {
         const top2 = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 2);
-        addMarketsBlock(kb, e, top2);
-      }
+        buildEventBlock(lines, kb, i + 1, e, top2);
+      });
     }
-    kb.text(`‹ Back`, `bm:wc:2`);
+    kb.row().text(`‹ Back`, `bm:wc:2`);
   }
 
   kb.row().text(`← Categories`, `bm:list`);
-
-  const pageLabel = `Page ${page}/3`;
-  return {
-    text: `🏆 <b>FIFA World Cup 2026</b>  ·  ${pageLabel}`,
-    kb,
-  };
+  return { text: lines.join("\n"), kb };
 }
 
 // Sports: one block per event — list all markets as text rows, one YES/NO pair per event
@@ -4323,7 +4342,9 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
       await editTradePromptMessage(
         ctx,
-        buildCategoryMarketsText(category, top3),
+        category.toUpperCase() === "WORLD CUP"
+          ? buildWcPage(top3, 1).text
+          : buildCategoryMarketsText(category, top3),
         buildCategoryMarketsKeyboard(category, top3),
         "HTML"
       );
