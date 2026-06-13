@@ -3884,9 +3884,8 @@ function buildCategoryPickerKeyboard(): InlineKeyboard {
     .text(`${categoryEmoji("politics")} Politics`, "bm:cat:POLITICS")
     .row()
     .text(`🏆 World Cup`, "bm:cat:WORLD CUP")
-    .text(`${categoryEmoji("sports")} Sports`, "bm:cat:SPORTS")
-    .row()
     .text(`${categoryEmoji("entertainment")} Entertainment`, "bm:cat:ENTERTAINMENT")
+    .row()
     .text(`${categoryEmoji("social media")} Social Media`, "bm:cat:SOCIAL MEDIA")
     .text(`${categoryEmoji("culture")} Culture`, "bm:cat:CULTURE");
   return kb;
