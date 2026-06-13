@@ -4097,22 +4097,25 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
 
 function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "no", balanceNgn: number): string {
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
+  const oppPrice = side === "yes" ? market.outcome2Price : market.outcome1Price;
   const sideLabel = side === "yes" ? "YES" : "NO";
   const minBet = Math.ceil(price * 100);
   const exShares = Math.floor(2000 / (price * 100));
-  const hasCandidateTitle = market.title && market.title.trim() &&
+  const hasCandidateTitle = market.title?.trim() &&
     market.title.trim().toLowerCase() !== event.title.trim().toLowerCase();
+  const outcomeLabel = hasCandidateTitle ? market.title.trim() :
+    (market.outcome1Label && !/^(yes|no)$/i.test(market.outcome1Label) ? market.outcome1Label : "");
 
   return [
-    `${side === "yes" ? "✅" : "❌"} <b>${escapeHtml(event.title)}</b>`,
-    hasCandidateTitle ? `   <i>${escapeHtml(market.title)}</i>` : "",
+    `${side === "yes" ? "🟢" : "🔴"} <b>${escapeHtml(sideLabel)}</b> on <b>${escapeHtml(event.title)}</b>`,
+    outcomeLabel ? `└ <i>${escapeHtml(outcomeLabel)}</i>` : "",
     "",
-    `   Buying <b>${sideLabel}</b> at ${c(formatNgnPrice(price))}/share`,
+    `├ Price:   ${fmtPrice(price)} per share  <i>(${fmtPrice(oppPrice)} other side)</i>`,
+    `├ Balance: ₦${Math.round(balanceNgn).toLocaleString()}`,
+    `└ Min bet: ₦${minBet}`,
     "",
-    `   Your balance: ${c(`₦${Math.round(balanceNgn).toLocaleString()}`)}`,
-    "",
-    `   Type a Naira amount (min ${c(`₦${minBet}`)})`,
-    `   e.g. ${c("₦2,000")} → ${exShares} shares → win ${c(`₦${(exShares * 100).toLocaleString()}`)}`,
+    `<b>Enter amount in Naira to trade:</b>`,
+    `<i>e.g. ₦2,000 → ${exShares} shares → win ₦${(exShares * 100).toLocaleString()} if correct</i>`,
   ].filter((l) => l !== "").join("\n");
 }
 
@@ -4130,26 +4133,29 @@ function buildReceiptText(input: {
   positionId: string;
   adminRouted?: boolean;
 }): string {
-  const sideEmoji = input.side.toLowerCase() === "yes" ? "🟢" : "🔴";
+  const isYes = input.side.toLowerCase() === "yes";
+  const sideEmoji = isYes ? "🟢" : "🔴";
   const pickedLabel = input.outcomeLabel && !/^(yes|no)$/i.test(input.outcomeLabel.trim())
-    ? ` — <b>${escapeHtml(input.outcomeLabel)}</b>`
+    ? ` — ${escapeHtml(input.outcomeLabel)}`
     : "";
+  const roi = input.ngnAmount > 0
+    ? `+${(((input.payoutNgn - input.ngnAmount) / input.ngnAmount) * 100).toFixed(0)}%`
+    : "";
+
   const lines = [
-    `✅ <b>Order placed!</b>`,
+    `✅ <b>Trade Confirmed</b>`,
     "",
-    `📌 <b>Market</b>`,
-    `<i>${escapeHtml(input.eventTitle)}</i>`,
+    `<b>${escapeHtml(input.eventTitle)}</b>`,
     "",
-    `${sideEmoji} <b>Pick:</b>  ${escapeHtml(input.side.toUpperCase())}${pickedLabel}`,
-    `💰 <b>Stake:</b>  ${c(`₦${input.ngnAmount.toLocaleString()}`)}`,
-    `📊 <b>Shares:</b> ${c(`${input.shares} @ ₦${input.priceNgn}`)}`,
-    `🏆 <b>Payout:</b> ${c(`₦${input.payoutNgn.toLocaleString()}`)} <i>if correct</i>`,
+    `├ ${sideEmoji} <b>${input.side.toUpperCase()}${pickedLabel}</b>`,
+    `├ Stake:   ₦${input.ngnAmount.toLocaleString()}`,
+    `├ Shares:  ${input.shares} @ ₦${input.priceNgn}/share`,
+    `└ Payout:  ₦${input.payoutNgn.toLocaleString()} if correct  <i>(${roi} ROI)</i>`,
     "",
-    `🔖 <b>Order ID:</b>`,
     `<code>${input.orderId ?? input.positionId}</code>`,
   ];
   if (input.adminRouted) {
-    lines.push("", `<i>ℹ️ Traded via shared account. <a href="/connectbayse">Connect your Bayse account</a> for direct ownership.</i>`);
+    lines.push("", `<i>ℹ️ Traded via shared account. <a href="/connectbayse">Connect Bayse</a> for direct ownership.</i>`);
   }
   return lines.join("\n");
 }
