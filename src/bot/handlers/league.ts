@@ -3930,11 +3930,50 @@ function expandEventMarkets(events: BayseEvent[]): { event: BayseEvent; market: 
   return rows;
 }
 
+function isWorldCupEvent(e: BayseEvent): boolean {
+  const t = e.title.toLowerCase();
+  return t.includes("world cup") || t.includes("fifa") || t.includes("wc 2026") || t.includes("wc2026");
+}
+
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
+  if (category.toUpperCase() === "SPORTS") {
+    return `⚽ <b>FIFA World Cup 2026</b>  ·  Live Markets`;
+  }
   return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
 }
 
+// Sports: one block per event — list all markets as text rows, one YES/NO pair per event
+function buildSportsMarketsKeyboard(events: BayseEvent[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+
+  for (const e of events) {
+    // Event heading row
+    kb.text(`⚽ ${e.title.slice(0, 55)}`, `bm:noop`).row();
+
+    // List every market as a labelled no-op row
+    for (const m of e.markets) {
+      const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
+        ? m.title.slice(0, 50)
+        : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.slice(0, 50) : m.title?.slice(0, 50) ?? "");
+      const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+      redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+      kb.text(`  · ${label.slice(0, 52)}`, `bm:noop`).row();
+      // Trade buttons per market, stacked on their own row
+      kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+        .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+        .row();
+    }
+  }
+
+  kb.text("← Categories", "bm:list");
+  return kb;
+}
+
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
+  if (category.toUpperCase() === "SPORTS") {
+    return buildSportsMarketsKeyboard(events);
+  }
+
   const kb = new InlineKeyboard();
   const rows = expandEventMarkets(events);
 
@@ -3957,8 +3996,8 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
     // Market title row (plain text button, no-op callback)
     kb.text(`📌 ${titleLine.slice(0, 55)}`, `bm:noop`).row();
     // YES / NO buttons on the next row
-    kb.text(`✅ YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`❌ NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
   });
 
@@ -3993,6 +4032,7 @@ function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "n
 
 function buildReceiptText(input: {
   side: string;
+  outcomeLabel: string;
   eventTitle: string;
   ngnAmount: number;
   shares: number;
@@ -4003,13 +4043,16 @@ function buildReceiptText(input: {
   adminRouted?: boolean;
 }): string {
   const sideEmoji = input.side.toLowerCase() === "yes" ? "🟢" : "🔴";
+  const pickedLabel = input.outcomeLabel && !/^(yes|no)$/i.test(input.outcomeLabel.trim())
+    ? ` — <b>${escapeHtml(input.outcomeLabel)}</b>`
+    : "";
   const lines = [
     `✅ <b>Order placed!</b>`,
     "",
     `📌 <b>Market</b>`,
     `<i>${escapeHtml(input.eventTitle)}</i>`,
     "",
-    `${sideEmoji} <b>Side:</b>  ${escapeHtml(input.side.toUpperCase())}`,
+    `${sideEmoji} <b>Pick:</b>  ${escapeHtml(input.side.toUpperCase())}${pickedLabel}`,
     `💰 <b>Stake:</b>  ${c(`₦${input.ngnAmount.toLocaleString()}`)}`,
     `📊 <b>Shares:</b> ${c(`${input.shares} @ ₦${input.priceNgn}`)}`,
     `🏆 <b>Payout:</b> ${c(`₦${input.payoutNgn.toLocaleString()}`)} <i>if correct</i>`,
@@ -4120,6 +4163,7 @@ async function placeBayseMarketBet(
   const payoutNgn = potentialPayoutNgn(shares);
   const receipt = buildReceiptText({
     side,
+    outcomeLabel,
     eventTitle: event.title,
     ngnAmount,
     shares,
@@ -4179,23 +4223,25 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
   if (data === "bm:noop") { await ctx.answerCallbackQuery(); return; }
 
-  // ── Category selected → show top 3 markets ────────────────────────────────
+  // ── Category selected → show markets ─────────────────────────────────────
   if (data.startsWith("bm:cat:")) {
     const category = normalizeCategoryKey(data.slice("bm:cat:".length));
     try {
       const events = await getCachedBayseEvents();
       const wantedCategory = category.toUpperCase();
+      const isSports = wantedCategory === "SPORTS";
       const filtered = events.filter((e) =>
         normalizeCategoryKey(e.category) === wantedCategory &&
         Array.isArray(e.markets) &&
-        e.markets.length > 0
+        e.markets.length > 0 &&
+        (!isSports || isWorldCupEvent(e))
       );
       const top3 = filtered
         .sort((a, b) =>
           (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
           (Number.isFinite(a.liquidity) ? a.liquidity : 0)
         )
-        .slice(0, 5);
+        .slice(0, isSports ? 10 : 5);
 
       if (top3.length === 0) {
         await editTradePromptMessage(
@@ -4326,20 +4372,26 @@ export async function handleBayseSlTpInput(ctx: Context): Promise<boolean> {
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 
 function buildPortfolioText(
-  positions: import("../../bayse-trading.ts").BaysePosition[]
+  positions: import("../../bayse-trading.ts").BaysePosition[],
+  localPositions: import("../../bayse-settlement.ts").BaysePositionRow[] = []
 ): string {
   if (positions.length === 0) {
     return "📂 <b>Your Portfolio</b>\n\nNo open positions. Use /markets to place a trade.";
   }
+  const localByOutcomeId = new Map(localPositions.map((p) => [p.outcome_id, p]));
   const lines: string[] = ["📂 <b>Your Portfolio</b>\n"];
   for (const pos of positions) {
     const title = pos.market?.event?.title ?? pos.market?.title ?? "Unknown market";
+    const local = localByOutcomeId.get(pos.outcomeId);
+    // Prefer local DB values — they are always in NGN and correct
+    const shares = local?.shares ?? pos.balance;
+    const payoutNgn = shares * 100; // ₦100 per share at win
+    const stakeNgn = local?.amount_ngn;
     lines.push(
       `🟡 <b>${escapeHtml(title)}</b>\n` +
-      `  Side: ${c(pos.outcome)}  ·  Shares: ${c(pos.balance)}\n` +
-      `  Avg price: ${c(`₦${Math.round(pos.averagePrice * 100)}`)}` +
-      (pos.currentValue > 0 ? `  ·  Value: ${c(`₦${pos.currentValue.toFixed(0)}`)}` : "") +
-      (pos.payoutIfOutcomeWins > 0 ? `  ·  Payout if win: ${c(`₦${pos.payoutIfOutcomeWins.toFixed(0)}`)}` : "")
+      `  Side: ${c(pos.outcome)}  ·  Shares: ${c(String(shares))}\n` +
+      (stakeNgn ? `  Stake: ${c(`₦${stakeNgn.toLocaleString()}`)}  ·  ` : `  `) +
+      `Payout if win: ${c(`₦${payoutNgn.toLocaleString()}`)}`
     );
   }
   return lines.join("\n");
@@ -4441,7 +4493,7 @@ export async function handlePortfolio(ctx: Context): Promise<void> {
     getUserBaysePositions(ctx.from.id).catch(() => []),
   ]);
   const sellKeys = await storeSellKeys(portfolio);
-  await ctx.reply(buildPortfolioText(portfolio), {
+  await ctx.reply(buildPortfolioText(portfolio, localPositions), {
     parse_mode: "HTML",
     reply_markup: buildPortfolioKeyboard(portfolio, sellKeys, localPositions),
   });
@@ -4463,7 +4515,7 @@ export async function handlePortfolioCallback(ctx: Context): Promise<void> {
       getUserBaysePositions(ctx.from.id).catch(() => []),
     ]);
     const sellKeys = await storeSellKeys(portfolio);
-    await editTradePromptMessage(ctx, buildPortfolioText(portfolio), buildPortfolioKeyboard(portfolio, sellKeys, localPositions), "HTML");
+    await editTradePromptMessage(ctx, buildPortfolioText(portfolio, localPositions), buildPortfolioKeyboard(portfolio, sellKeys, localPositions), "HTML");
     return;
   }
 

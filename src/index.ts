@@ -77,8 +77,9 @@ import { getLatestFantasyTradeForMember } from "./db/fantasy.ts";
 import { saveFantasyTradeReference } from "./fantasy-state.ts";
 import { placeFantasyTradeFromCallbackData } from "./fantasy-league.ts";
 import { sendAdminAlert } from "./utils/alert.ts";
+import { startWorldCupNotifier, stopWorldCupNotifier } from "./worldcup-notifier.ts";
 
-const bot = new Bot(config.BOT_TOKEN);
+export const bot = new Bot(config.BOT_TOKEN);
 const app = express();
 const healthRateLimit = createRateLimitMiddleware({
   keyPrefix: "health-route",
@@ -610,6 +611,7 @@ async function shutdown(signal: string): Promise<void> {
   stopBayseSettlementMonitor();
   stopSlTpMonitor();
   stopSolanaWalletMonitor();
+  stopWorldCupNotifier();
 
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
@@ -742,6 +744,7 @@ async function main(): Promise<void> {
   startSolanaWalletMonitor();
   startBayseSettlementMonitor();
   startSlTpMonitor();
+  startWorldCupNotifier();
 
   if (config.WEBHOOK_URL) {
     const webhookUrl = `${config.WEBHOOK_URL}/webhook/${config.WEBHOOK_PATH_SECRET}`;
