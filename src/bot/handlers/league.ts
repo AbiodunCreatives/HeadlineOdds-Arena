@@ -3937,7 +3937,7 @@ function isWorldCupEvent(title: string): boolean {
   return t.includes("world cup") || t.includes("fifa") || t.includes("wc 2026") || t.includes("wc2026");
 }
 
-function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
+function buildCategoryMarketsText(category: string, _events: BayseEvent[]): string {
   if (category.toUpperCase() === "WORLD CUP") {
     return `🏆 <b>FIFA World Cup 2026</b>  ·  Live Markets`;
   }
@@ -3947,35 +3947,101 @@ function buildCategoryMarketsText(category: string, events: BayseEvent[]): strin
   return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
 }
 
+// ── WC pagination helpers ────────────────────────────────────────────────────
+
+function addMarketsBlock(
+  kb: InlineKeyboard,
+  e: BayseEvent,
+  markets: BayseMarket[]
+): void {
+  for (const m of markets) {
+    const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
+      ? m.title.trim()
+      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : e.title.trim());
+    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+    kb.text(`· ${label.slice(0, 54)}`, `bm:noop`).row();
+    kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+      .row();
+  }
+}
+
+function buildWcPage(events: BayseEvent[], page: number): { text: string; kb: InlineKeyboard } {
+  const kb = new InlineKeyboard();
+
+  // Sort events: WC winner first by liquidity, then groups by name, then others
+  const winner = events.find((e) => /win the 2026/i.test(e.title));
+  const groups = events
+    .filter((e) => /group [a-z] winner/i.test(e.title))
+    .sort((a, b) => a.title.localeCompare(b.title));
+  const others = events.filter(
+    (e) => !/win the 2026/i.test(e.title) && !/group [a-z] winner/i.test(e.title)
+  );
+
+  if (page === 1) {
+    // Page 1: WC winner — top 6 countries
+    kb.text(`🏆 Who Wins the World Cup?`, `bm:noop`).row();
+    if (winner) {
+      const top6 = [...winner.markets]
+        .sort((a, b) => b.outcome1Price - a.outcome1Price)
+        .slice(0, 6);
+      addMarketsBlock(kb, winner, top6);
+    }
+    kb.text(`More ›`, `bm:wc:2`);
+  } else if (page === 2) {
+    // Page 2: Group Winners A–C (3 groups)
+    kb.text(`🏆 Group Winners — A to C`, `bm:noop`).row();
+    for (const g of groups.slice(0, 3)) {
+      const letter = (g.title.match(/group ([a-z])/i)?.[1] ?? "").toUpperCase();
+      kb.text(`Group ${letter} Winner`, `bm:noop`).row();
+      addMarketsBlock(kb, g, g.markets.slice(0, 4));
+    }
+    kb.text(`‹ Back`, `bm:wc:1`).text(`More ›`, `bm:wc:3`);
+  } else {
+    // Page 3: Group Winners D–F + other markets
+    kb.text(`🏆 Group Winners — D to F`, `bm:noop`).row();
+    for (const g of groups.slice(3, 6)) {
+      const letter = (g.title.match(/group ([a-z])/i)?.[1] ?? "").toUpperCase();
+      kb.text(`Group ${letter} Winner`, `bm:noop`).row();
+      addMarketsBlock(kb, g, g.markets.slice(0, 4));
+    }
+    if (others.length > 0) {
+      kb.text(`🏆 Other Markets`, `bm:noop`).row();
+      for (const e of others.slice(0, 3)) {
+        kb.text(`· ${e.title.slice(0, 54)}`, `bm:noop`).row();
+        const top2 = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 2);
+        addMarketsBlock(kb, e, top2);
+      }
+    }
+    kb.text(`‹ Back`, `bm:wc:2`);
+  }
+
+  kb.row().text(`← Categories`, `bm:list`);
+
+  const pageLabel = `Page ${page}/3`;
+  return {
+    text: `🏆 <b>FIFA World Cup 2026</b>  ·  ${pageLabel}`,
+    kb,
+  };
+}
+
 // Sports: one block per event — list all markets as text rows, one YES/NO pair per event
 function buildSportsMarketsKeyboard(events: BayseEvent[]): InlineKeyboard {
   const kb = new InlineKeyboard();
-
   for (const e of events) {
-    // Event heading row
     kb.text(`⚽ ${e.title.slice(0, 55)}`, `bm:noop`).row();
-
-    // List every market as a labelled no-op row
-    for (const m of e.markets) {
-      const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
-        ? m.title.slice(0, 50)
-        : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.slice(0, 50) : m.title?.slice(0, 50) ?? "");
-      const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
-      redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-      kb.text(`  · ${label.slice(0, 52)}`, `bm:noop`).row();
-      // Trade buttons per market, stacked on their own row
-      kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-        .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
-        .row();
-    }
+    addMarketsBlock(kb, e, e.markets.slice(0, 3));
   }
-
   kb.text("← Categories", "bm:list");
   return kb;
 }
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
-  if (category.toUpperCase() === "SPORTS" || category.toUpperCase() === "WORLD CUP") {
+  if (category.toUpperCase() === "WORLD CUP") {
+    return buildWcPage(events, 1).kb;
+  }
+  if (category.toUpperCase() === "SPORTS") {
     return buildSportsMarketsKeyboard(events);
   }
 
@@ -3998,9 +4064,7 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
       titleLine = (reframed !== e.title || isGenericLabel) ? reframed : `${e.title} — ${m.outcome1Label}`;
     }
 
-    // Market title row (plain text button, no-op callback)
     kb.text(`📌 ${titleLine.slice(0, 55)}`, `bm:noop`).row();
-    // YES / NO buttons on the next row
     kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
       .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
@@ -4266,6 +4330,28 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     } catch (err) {
       console.error("[bayse] category load failed:", err instanceof Error ? err.message : err);
       await ctx.reply("Markets are temporarily unavailable. Please try again in a minute.");
+    }
+    return;
+  }
+
+  // ── WC page navigation ────────────────────────────────────────────────────
+  if (data.startsWith("bm:wc:")) {
+    const page = Number(data.slice("bm:wc:".length));
+    if (![1, 2, 3].includes(page)) { await ctx.answerCallbackQuery(); return; }
+    try {
+      const events = await getCachedBayseEvents();
+      const wcEvents = events.filter(
+        (e) => normalizeCategoryKey(e.category) === "WORLD CUP" && Array.isArray(e.markets) && e.markets.length > 0
+      );
+      if (wcEvents.length === 0) {
+        await editTradePromptMessage(ctx, `No live World Cup markets right now.\n\nPick another category:`, buildCategoryPickerKeyboard(), "Markdown");
+        return;
+      }
+      const { text, kb } = buildWcPage(wcEvents, page);
+      await editTradePromptMessage(ctx, text, kb, "HTML");
+    } catch (err) {
+      console.error("[wc] page load failed:", err instanceof Error ? err.message : err);
+      await ctx.reply("Markets are temporarily unavailable. Please try again.");
     }
     return;
   }
