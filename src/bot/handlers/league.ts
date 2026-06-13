@@ -3930,14 +3930,17 @@ function expandEventMarkets(events: BayseEvent[]): { event: BayseEvent; market: 
   return rows;
 }
 
-function isWorldCupEvent(e: BayseEvent): boolean {
-  const t = e.title.toLowerCase();
+function isWorldCupEvent(title: string): boolean {
+  const t = title.toLowerCase();
   return t.includes("world cup") || t.includes("fifa") || t.includes("wc 2026") || t.includes("wc2026");
 }
 
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
+  const hasWC = events.some((e) => isWorldCupEvent(e.title));
   if (category.toUpperCase() === "SPORTS") {
-    return `⚽ <b>FIFA World Cup 2026</b>  ·  Live Markets`;
+    return hasWC
+      ? `⚽ <b>FIFA World Cup 2026</b>  ·  Live Markets`
+      : `⚽ <b>Sports</b>  ·  Live Markets`;
   }
   return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
 }
@@ -4233,8 +4236,7 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
       const filtered = events.filter((e) =>
         normalizeCategoryKey(e.category) === wantedCategory &&
         Array.isArray(e.markets) &&
-        e.markets.length > 0 &&
-        (!isSports || isWorldCupEvent(e))
+        e.markets.length > 0
       );
       const top3 = filtered
         .sort((a, b) =>
