@@ -3820,6 +3820,7 @@ const MARKETS_AUTO_DELETE_MS = 60_000;
 const CATEGORY_EMOJI: Record<string, string> = {
   politics: "🗳",
   sports: "⚽",
+  "world cup": "🏆",
   entertainment: "🎬",
   crypto: "₿",
   business: "📈",
@@ -3828,7 +3829,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
 };
 
 // Fixed category list shown to users regardless of what Bayse returns
-const FIXED_CATEGORIES = ["CRYPTO", "POLITICS", "SPORTS", "ENTERTAINMENT", "SOCIAL MEDIA", "CULTURE"];
+const FIXED_CATEGORIES = ["CRYPTO", "POLITICS", "SPORTS", "WORLD CUP", "ENTERTAINMENT", "SOCIAL MEDIA", "CULTURE"];
 
 function categoryEmoji(category: string): string {
   return CATEGORY_EMOJI[category.toLowerCase()] ?? "📊";
@@ -3881,6 +3882,8 @@ function buildCategoryPickerKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(`${categoryEmoji("crypto")} Crypto`, "bm:cat:CRYPTO")
     .text(`${categoryEmoji("politics")} Politics`, "bm:cat:POLITICS")
+    .row()
+    .text(`🏆 World Cup`, "bm:cat:WORLD CUP")
     .text(`${categoryEmoji("sports")} Sports`, "bm:cat:SPORTS")
     .row()
     .text(`${categoryEmoji("entertainment")} Entertainment`, "bm:cat:ENTERTAINMENT")
@@ -3936,11 +3939,11 @@ function isWorldCupEvent(title: string): boolean {
 }
 
 function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
-  const hasWC = events.some((e) => isWorldCupEvent(e.title));
+  if (category.toUpperCase() === "WORLD CUP") {
+    return `🏆 <b>FIFA World Cup 2026</b>  ·  Live Markets`;
+  }
   if (category.toUpperCase() === "SPORTS") {
-    return hasWC
-      ? `⚽ <b>FIFA World Cup 2026</b>  ·  Live Markets`
-      : `⚽ <b>Sports</b>  ·  Live Markets`;
+    return `⚽ <b>Sports</b>  ·  Live Markets`;
   }
   return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
 }
@@ -3973,7 +3976,7 @@ function buildSportsMarketsKeyboard(events: BayseEvent[]): InlineKeyboard {
 }
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
-  if (category.toUpperCase() === "SPORTS") {
+  if (category.toUpperCase() === "SPORTS" || category.toUpperCase() === "WORLD CUP") {
     return buildSportsMarketsKeyboard(events);
   }
 

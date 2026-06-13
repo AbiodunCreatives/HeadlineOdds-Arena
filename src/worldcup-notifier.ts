@@ -35,7 +35,7 @@ async function sendWorldCupNotifications(): Promise<void> {
   try {
     const events = await listBayseEvents({ size: 100 });
     const wcEvents = events.filter(
-      (e) => e.category?.toUpperCase() === "SPORTS" && isWorldCupEvent(e.title)
+      (e) => e.category?.toUpperCase() === "WORLD CUP" && Array.isArray(e.markets) && e.markets.length > 0
     );
 
     if (wcEvents.length === 0) {
