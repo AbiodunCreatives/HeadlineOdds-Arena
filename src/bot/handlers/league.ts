@@ -3956,10 +3956,6 @@ function fmtVol(liquidity: number): string {
   return `$${Math.round(liquidity)}`;
 }
 
-function fmtPrice(p: number): string {
-  return `${Math.round(p * 100)}¢`;
-}
-
 function addMarketsBlock(
   kb: InlineKeyboard,
   e: BayseEvent,
@@ -3971,8 +3967,8 @@ function addMarketsBlock(
       : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : e.title.trim());
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`YES ${label.slice(0, 20)} ${fmtPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO ${label.slice(0, 20)} ${fmtPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`YES ${label.slice(0, 20)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO ${label.slice(0, 20)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
   }
 }
@@ -3995,9 +3991,9 @@ function buildEventBlock(
       : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : "Yes");
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    lines.push(`${prefix} ${escapeHtml(label.slice(0, 40))} — YES ${fmtPrice(m.outcome1Price)} · NO ${fmtPrice(m.outcome2Price)}`);
-    kb.text(`YES — ${label.slice(0, 18)} ${fmtPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO — ${label.slice(0, 18)} ${fmtPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    lines.push(`${prefix} ${escapeHtml(label.slice(0, 40))} — YES ${formatNgnPrice(m.outcome1Price)} · NO ${formatNgnPrice(m.outcome2Price)}`);
+    kb.text(`YES — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
       .row();
   }
 }
@@ -4110,7 +4106,7 @@ function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "n
     `${side === "yes" ? "🟢" : "🔴"} <b>${escapeHtml(sideLabel)}</b> on <b>${escapeHtml(event.title)}</b>`,
     outcomeLabel ? `└ <i>${escapeHtml(outcomeLabel)}</i>` : "",
     "",
-    `├ Price:   ${fmtPrice(price)} per share  <i>(${fmtPrice(oppPrice)} other side)</i>`,
+    `├ Price:   ${formatNgnPrice(price)} per share  <i>(${formatNgnPrice(oppPrice)} other side)</i>`,
     `├ Balance: ₦${Math.round(balanceNgn).toLocaleString()}`,
     `└ Min bet: ₦${minBet}`,
     "",
