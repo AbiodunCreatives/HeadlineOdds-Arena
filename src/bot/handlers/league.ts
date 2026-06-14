@@ -4014,7 +4014,6 @@ function buildWcPage(events: BayseEvent[], page: number): { text: string; kb: In
   );
 
   if (page === 1) {
-    lines.push(`⚽️ <b>Who Wins the World Cup?</b>\n<i>Top contenders by odds:</i>`);
     if (winner) {
       const top6 = [...winner.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 6);
       buildEventBlock(lines, kb, 1, winner, top6);
