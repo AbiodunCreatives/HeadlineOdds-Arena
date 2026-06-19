@@ -4716,7 +4716,10 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     await saveBayseCustomBetPending(ctx.from.id);
 
     const userKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
-    const bayseBalance = await getBayseWalletBalance(userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined).catch(() => ({ ngn: 0 }));
+    const bayseBalance = await getBayseWalletBalance(userKeys ? { pub: userKeys.publicKey, sec: userKeys.secretKey } : undefined).catch((err) => {
+      console.error("[bayse:balance] fetch failed:", err instanceof Error ? err.message : err);
+      return { ngn: 0, usd: 0 };
+    });
     await editTradePromptMessage(
       ctx,
       buildQuoteText(event, market, side, bayseBalance.ngn),
