@@ -3497,7 +3497,7 @@ export async function handleTrending(ctx: Context): Promise<void> {
   }
 }
 
-(ctx: Context): Promise<void> {
+export async function handleAdminWithdraw(ctx: Context): Promise<void> {
   if (!ctx.from) return
   if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
     await ctx.reply("⛔ Unauthorized.")
