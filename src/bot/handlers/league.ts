@@ -4018,7 +4018,9 @@ function buildMarketOverviewKeyboard(event: BayseEvent, page: number): InlineKey
   const kb = new InlineKeyboard();
   for (const m of slice) {
     const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Outcome";
-    kb.text(escapeHtml(label.slice(0, 30)), `jm:detail:${event.id}:${m.id}:p${page}`).row();
+    const shortKey = `${event.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${event.id}:${m.id}`, "EX", 3600).catch(() => null);
+    kb.text(escapeHtml(label.slice(0, 30)), `jm:detail:${shortKey}:p${page}`).row();
   }
 
   if (page < totalPages) kb.text(`More ›`, `jm:overview:${event.id}:p${page + 1}`);
@@ -4562,18 +4564,17 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
   // ── Jupiter-style: Outcome detail ─────────────────────────────────────────
   if (data.startsWith("jm:detail:")) {
-    // format: jm:detail:<eventId>:<marketId>:p<backPage>
+    // format: jm:detail:<shortKey>:p<backPage>  (shortKey = 8-char redis key)
     const rest = data.slice("jm:detail:".length);
     const pIdx = rest.lastIndexOf(":p");
-    const ids = pIdx >= 0 ? rest.slice(0, pIdx) : rest;
+    const shortKey = pIdx >= 0 ? rest.slice(0, pIdx) : rest;
     const backPage = pIdx >= 0 ? Math.max(1, Number(rest.slice(pIdx + 2)) || 1) : 1;
-    // eventId and marketId are both UUIDs with dashes — split at first occurrence of :<uuid>
-    // We stored them as eventId:marketId where marketId is a UUID
-    const colonIdx = ids.indexOf(":");
-    if (colonIdx < 0) { await ctx.reply("Session expired. Try again."); return; }
-    const eventId = ids.slice(0, colonIdx);
-    const marketId = ids.slice(colonIdx + 1);
     try {
+      const stored = await redis.get(`bayse:mkt:${shortKey}`);
+      if (!stored) { await ctx.reply("Session expired. Try again."); return; }
+      const colonIdx = stored.indexOf(":");
+      const eventId = stored.slice(0, colonIdx);
+      const marketId = stored.slice(colonIdx + 1);
       const events = await getCachedBayseEvents();
       const event = events.find((e) => e.id === eventId);
       const market = event?.markets?.find((m) => m.id === marketId);
