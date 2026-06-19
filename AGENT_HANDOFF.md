@@ -1,144 +1,121 @@
-# HeadlineOdds Arena — Agent Handoff Codex
+# Agent Handoff — HeadlineOdds Arena
 
-## Project
-Telegram bot (grammy + TypeScript + Supabase + Solana USDC) for BTC prediction arenas.
-Repo: https://github.com/AbiodunCreatives/HeadlineOdds-Arena
-Stack: Node.js, TypeScript, pnpm, Supabase (Postgres), Redis, Solana, Render (hosting)
-
----
-
-## What was built in this session
-
-### 1. Free Trial Arena (`migrations/004_free_trial_hlo_points.sql`)
-- `is_free_trial BOOLEAN` column on `fantasy_games`
-- `hlo_points` table: `(telegram_id, amount, reason, reference_id, created_at)`
-- `create_free_trial_game` SQL RPC — inserts game + member, entry_fee=0, no wallet debit
-- `join_free_trial_game` SQL RPC — joins free trial game, no wallet debit
-
-### 2. AI Arena Bots (`migrations/005_ai_arena_bots.sql`)
-- `is_bot BOOLEAN` on `fantasy_users`
-- `ai_arena_bots` table: `(telegram_id, display_name, style)`
-- 5 bots seeded with negative telegram_ids (-1001 to -1005):
-
-| telegram_id | Name | Style |
-|---|---|---|
-| -1001 | Phiona | aggressive |
-| -1002 | Danfo_Dave | conservative |
-| -1003 | Fave | random |
-| -1004 | Mallam_Odds | trend |
-| -1005 | Alhaji_Pump | contrarian |
-
-### 3. Key source files added/modified
-
-| File | What changed |
-|---|---|
-| `src/agent-signals.ts` | NEW — BTC momentum, RSI(14), oddsDrift signals, all [-1,+1] |
-| `src/arena-bots.ts` | NEW — bot seeding, Kelly-criterion decision, auto-trade per round |
-| `src/db/fantasy.ts` | Added `is_free_trial` to FantasyGame, createFreeTrialGame, joinFreeTrialGame, hasUsedFreeTrial, awardHloPoints, getHloPoints |
-| `src/fantasy-game.ts` | Added createFreeTrialArena, joinFreeTrialArena, awardFreeTrialHloPoints |
-| `src/fantasy-league.ts` | Re-exports all new functions |
-| `src/fantasy-round.ts` | Calls runBotTradesForRound for free trial games each round, passes previousUpPrice |
-| `src/bot/handlers/league.ts` | /start shows free trial CTA for users who haven't used it; arena:free_trial callback |
-| `scripts/smoke-free-trial.ts` | E2E smoke test (all passing) |
-
-### 4. Free trial flow
-1. User hits `/start` → if balance=0 AND never used free trial → free trial welcome screen
-2. Taps `🎮 Try Free Arena` → `createFreeTrialArena` → game created, 5 bots seeded
-3. Each 15-min round → `processFantasyLeagueRound` → bots auto-trade using live signals
-4. Game ends → call `awardFreeTrialHloPoints(telegramId, gameId)` for each real member (250 HLO each)
-5. **TODO**: `awardFreeTrialHloPoints` is NOT yet wired into `finalizeFantasyGames` — next agent must do this
-
-### 5. Agent signal architecture (`src/agent-signals.ts`)
-```
-momentumSignal()   — 4x15m Binance klines slope, normalised to ±1% range
-rsiSignal()        — RSI(14) on 15m candles, overbought/oversold mapped to [-1,+1]
-oddsDriftSignal()  — upPrice delta vs previous round, capped at ±0.1
-composite          — 40% momentum + 30% RSI + 30% oddsDrift
-```
-
-### 6. Bot decision logic (`src/arena-bots.ts` — `botDecision`)
-Each style uses Kelly criterion for stake sizing:
-- **Phiona (aggressive)**: follows signal always, Kelly cap 40%, confidence threshold 0
-- **Danfo_Dave (conservative)**: follows signal only if |composite| > 0.3, Kelly cap 10%
-- **Fave (random)**: ignores signal, random direction + random stake
-- **Mallam_Odds (trend)**: follows signal if |composite| > 0.1, Kelly cap 20%
-- **Alhaji_Pump (contrarian)**: fades the signal (bets opposite), Kelly cap 25%
+**Date:** 2026-06-19  
+**Handoff reason:** context limit approaching  
+**Next agent should pick up from:** Spec 1 Task 4 (24h delta indicators) and Spec 2 Task 7 (automated tests)
 
 ---
 
-## Next steps for the next agent
+## What was done this session
 
-### Priority 1 — Wire HLO points into game finalization
-In `src/fantasy-round.ts`, function `finalizeFantasyGames`:
-- After `updateFantasyGame({ status: "completed" })`, loop through real members (filter out bots: `telegram_id > 0`)
-- Call `awardFreeTrialHloPoints(member.telegram_id, game.id)` for each
-- Import from `./fantasy-league.ts`
+### Spec 2 — World Cup Balance Routing Fix ✅ MOSTLY COMPLETE
 
-```typescript
-// In finalizeFantasyGames, after updateFantasyGame completed:
-if (completedGame.is_free_trial) {
-  for (const member of members.filter(m => m.telegram_id > 0)) {
-    await awardFreeTrialHloPoints(member.telegram_id, completedGame.id).catch(console.error);
-  }
-}
-```
+**Root cause confirmed:** Two bugs combined to break WC trades:
+1. `worldcup-notifier.ts` was routing the "Trade Now" button to `bm:cat:SPORTS` instead of `bm:cat:WORLD CUP` — users never reached WC screens.
+2. The `bm:bet:` callback had no guard for missing Bayse credentials — users without a connected account would silently fail at the amount-input step.
 
-### Priority 2 — Player-owned agent arena (paid)
-The vision: players pick one of the 5 agents, fund it with USDC, and it competes in a paid arena.
+**Changes made:**
 
-Architecture:
-1. Add `agent_style TEXT` column to `fantasy_game_members` — which agent the player chose
-2. New Telegram flow: `/start` → `🤖 Agent Arena` → pick style → pay entry → agent trades for you
-3. In `processFantasyLeagueRound`, for paid games: check if member has `agent_style` set → call `botDecision` for them automatically
-4. Player watches the leaderboard — their agent trades, they win/lose real USDC
+| File | Change |
+|------|--------|
+| `src/worldcup-notifier.ts` | Both keyboard buttons (update blast + daily digest) now point to `"bm:cat:WORLD CUP"` |
+| `src/bot/handlers/league.ts` | Added `CATEGORY_BALANCE_SOURCE` config map + exported `getBalanceSource(category)` resolver |
+| `src/bot/handlers/league.ts` | `bm:bet:` callback now calls `getBalanceSource` and shows "connect your Bayse account" prompt when user has no credentials (instead of falling through to silent failure) |
+| `src/bot/handlers/balance-routing.test.ts` | New test file — 4 tests covering Sports, World Cup, Crypto, and unknown categories — all expect `connected_base_market_balance` |
 
-Key constraint: agent-owned members still need a real `telegram_id` (the owner's) so they receive settlement messages. The `agent_style` field just means "trade automatically for this member".
-
-### Priority 3 — x402 agent API (developer audience)
-Expose REST endpoints so external agents can join arenas and trade autonomously:
-- `POST /api/arena/join` — returns 402 with Solana payment payload if not paid
-- `POST /api/arena/trade` — place a trade (requires valid arena membership)
-- `GET /api/arena/state/:code` — current round pricing + leaderboard
-
-Use `x402-express` middleware (npm package). Each endpoint wraps with:
-```typescript
-import { paymentMiddleware } from "x402-express";
-app.post("/api/arena/join", paymentMiddleware({ amount: entryFee, asset: "USDC", network: "solana" }), handler);
-```
-
-### Priority 4 — Signal improvement
-Current signals are simple. To improve bot performance:
-- Add volume signal: Binance 15m volume spike = momentum confirmation
-- Add funding rate signal: Binance perpetual funding rate (positive = longs paying = bearish)
-- Add VWAP deviation: price vs VWAP = mean reversion signal
-- Backtest: run `scripts/smoke-free-trial.ts` style test against historical Binance data
+**Still needed (Spec 2):**
+- [ ] Task 7: Install deps (`pnpm install`) and run `npm test` to confirm `balance-routing.test.ts` passes
+- [ ] Task 8: Audit DB for any existing WC positions under old in-bot-balance path (check `prediction_market_bets` table for WC market IDs)
+- [ ] Task 9-10: Staging + prod deploy + monitor
 
 ---
 
-## Running the project
+### Spec 1 — Jupiter-Style Market UI ✅ SCREENS A/B/C BUILT
+
+**Changes made:**
+
+| File | Change |
+|------|--------|
+| `src/bot/handlers/league.ts` | Added `buildTrendingText` + `buildTrendingKeyboard` (Screen A) |
+| `src/bot/handlers/league.ts` | Added `buildMarketOverviewText` + `buildMarketOverviewKeyboard` (Screen B) |
+| `src/bot/handlers/league.ts` | Added `buildOutcomeDetailText` + `buildOutcomeDetailKeyboard` (Screen C) |
+| `src/bot/handlers/league.ts` | `handleMarketsCallback` now handles `jm:trending:`, `jm:overview:`, `jm:detail:` callbacks |
+| `src/bot/handlers/league.ts` | `bm:cat:WORLD CUP` now routes into Screen B (market overview) for top WC event instead of old `buildWcPage` |
+| `src/bot/handlers/league.ts` | Added exported `handleTrending` command handler |
+| `src/bot/handlers/league.ts` | Start keyboards (`buildStartWelcomeKeyboard`, `buildStartOnboardingKeyboard`) now include "🔥 Trending" button → `jm:trending:1` |
+| `src/index.ts` | Registered `bot.command("trending", wrap(handleTrending))` |
+| `src/index.ts` | Registered `bot.callbackQuery(/^jm:/, wrap(handleMarketsCallback))` |
+
+**Navigation flow now:**
+```
+/start or /trending
+  → Screen A: 🔥 Trending (numbered list, paginated, quick-jump [1][2][3][4][5])
+      → tap number → Screen B: Market Overview (outcomes ranked, More/Back)
+          → tap outcome row → Screen C: Outcome Detail (prices, stats, timeline, top traders)
+              → [🟢 YES] / [🔴 NO] → amount input (Bayse path)
+              → [← Back] → returns to Screen B at same page
+
+/markets → Categories picker
+  → World Cup → Screen B directly (top liquidity WC event)
+  → Sports/Crypto/etc → existing market list
+```
+
+**Still needed (Spec 1):**
+- [x] Task 4: 24h price-delta (▲/▼) on Screen B — **DONE**. Redis snapshot approach: `snapshotMarketPrices()` fires on every fresh Bayse fetch, storing `bayse:snap:<marketId>` with 25h TTL + NX flag (only sets on first fetch). `get24hDelta()` reads snapshot and shows `▲ ₦N` / `▼ ₦N` inline next to YES price. No snapshot = silent omit.
+- [ ] Task 7: Point "Today's Markets" pinned message (if any) at new Screen B template
+- [ ] Task 8: QA pass — side-by-side with Jupiter Predict Bot screenshots
+- [ ] Task 9: Regression test non-WC categories are unaffected
+
+---
+
+## Codebase orientation
+
+```
+src/
+  index.ts                    — Bot entry, all command + callback registrations
+  bot/handlers/league.ts      — ALL bot UI: 4500+ lines, all screens live here
+  bot/handlers/balance-routing.test.ts  — NEW: balance source tests
+  bayse-trading.ts            — Bayse API client (listBayseEvents, placeBayseOrder, etc.)
+  bayse-market.ts             — BTC 15m round/pricing helpers
+  worldcup-notifier.ts        — Daily WC digest + update blast scheduler
+  prediction-market.ts        — Legacy in-bot prediction market (NOT used for WC anymore)
+  fantasy-league.ts           — Arena game logic
+  db/balances.ts              — In-bot USDC balance (getBalance, debitBalance, creditBalance)
+  db/bayse-credentials.ts     — getBayseCredentials, saveBayseCredentials
+```
+
+**Key callback prefixes:**
+- `bm:` — markets/categories/bet flow (existing)
+- `jm:` — Jupiter-style screens A/B/C (new this session)
+- `flt:` — fantasy league trade
+- `arena:` / `start:` / `wallet:` — arena/wallet UI
+
+**Redis keys used by new code:**
+- `bayse:mkt:<shortKey>` → `eventId:marketId` (8-char shortKey, 1h TTL) — existing, reused by Screen C
+- `bayse:bet:<telegramId>` → pending bet state (5m TTL)
+- `bayse:bet:custom:<telegramId>` → awaiting amount input flag
+
+**Environment:** Node 24, TypeScript, grammy bot framework, Supabase (Postgres), Redis, Bayse Markets API, PajCash, Solana
+
+---
+
+## How to run
+
 ```bash
-pnpm install
-npx tsc --noEmit          # type check
-npx tsx scripts/smoke-free-trial.ts  # e2e smoke test
+pnpm install          # first time
+npm run dev           # local dev with tsx watch
+npm test              # vitest run (needs deps installed)
+npm run typecheck     # tsc --noEmit
 ```
 
-## DB migrations to apply (in order)
-```
-migrations/001_fantasy_safety.sql
-migrations/002_revenue_idempotency.sql
-migrations/003_prize_ledger_idempotency.sql
-migrations/004_free_trial_hlo_points.sql   ← NEW this session
-migrations/005_ai_arena_bots.sql           ← NEW this session
-```
+Deploy: fly.io via `fly deploy` (see `FLY_IO_DEPLOY.md`)
 
-## Environment variables (see .env.example)
-All required vars are documented. Key ones:
-- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — Postgres
-- `REDIS_URL` — Redis (or `REDIS_MODE=memory` for local)
-- `BOT_TOKEN` — Telegram bot token
-- `SOLANA_*` — treasury wallet + RPC
+---
 
-## Commit history (this session)
-- `bce988a` — feat: free trial arena + AI bot players
-- `2a1f23e` — fix: show free trial button for all users who haven't used it yet
-- (pending) — feat: signal-based agent training with Kelly criterion
+## Immediate next actions for next agent
+
+1. `pnpm install` to restore node_modules
+2. `npm test` — confirm `balance-routing.test.ts` passes (4 tests)
+3. `npm run typecheck` — confirm no TS errors in new code
+4. Implement 24h delta for Screen B (see Task 4 options above — Redis snapshot approach is simplest)
+5. Deploy to staging and run end-to-end WC trade test

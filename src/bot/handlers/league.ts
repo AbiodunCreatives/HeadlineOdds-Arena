@@ -316,7 +316,9 @@ function buildStartWelcomeKeyboard(): InlineKeyboard {
     .row()
     .text("💳 Wallet", START_WALLET)
     .text("❓ FAQ", START_HOW_IT_WORKS)
-    .text("📊 Markets", "bm:list");
+    .text("📊 Markets", "bm:list")
+    .row()
+    .text("🔥 Trending", "jm:trending:1");
 }
 
 function buildFreeTrialWelcomeText(firstName: string): string {
@@ -412,7 +414,9 @@ function buildStartOnboardingKeyboard(_showFreeTrial = false): InlineKeyboard {
     .row()
     .text("💳 Wallet", START_WALLET)
     .text("❓ FAQ", START_HOW_IT_WORKS)
-    .text("📊 Markets", "bm:list");
+    .text("📊 Markets", "bm:list")
+    .row()
+    .text("🔥 Trending", "jm:trending:1");
 }
 
 function buildCreateArenaPickerText(balance: number): string {
@@ -3477,7 +3481,23 @@ export async function handleFantasyJoinDecline(ctx: Context): Promise<void> {
 }
 
 
-export async function handleAdminWithdraw(ctx: Context): Promise<void> {
+export async function handleTrending(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  try {
+    const events = await getCachedBayseEvents();
+    const sorted = [...events]
+      .filter((e) => Array.isArray(e.markets) && e.markets.length > 0)
+      .sort((a, b) => (b.liquidity ?? 0) - (a.liquidity ?? 0));
+    await ctx.reply(buildTrendingText(sorted, 1), {
+      parse_mode: "HTML",
+      reply_markup: buildTrendingKeyboard(sorted, 1),
+    });
+  } catch (err) {
+    await ctx.reply("Markets temporarily unavailable. Try again in a moment.");
+  }
+}
+
+(ctx: Context): Promise<void> {
   if (!ctx.from) return
   if (ctx.from.id !== Number(process.env.ADMIN_USER_ID)) {
     await ctx.reply("⛔ Unauthorized.")
@@ -3861,6 +3881,7 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
       const events = await listBayseEvents({ size: 100 });
       if (events.length > 0) {
         redis.set(BAYSE_MARKETS_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL).catch(() => null);
+        snapshotMarketPrices(events).catch(() => null);
       }
       return events;
     } catch (err) {
@@ -3870,6 +3891,193 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
     }
   }
   throw lastError;
+}
+
+// Store YES price snapshots for 24h delta calculation.
+// Key: bayse:snap:<marketId>  Value: price (float string)  TTL: 25h (NX = only set if not already set)
+async function snapshotMarketPrices(events: BayseEvent[]): Promise<void> {
+  const pipe = redis.pipeline();
+  for (const e of events) {
+    for (const m of e.markets) {
+      pipe.set(`bayse:snap:${m.id}`, String(m.outcome1Price), "EX", 25 * 3600, "NX");
+    }
+  }
+  await pipe.exec();
+}
+
+// Returns delta string like "▲ ₦3" / "▼ ₦2" or "" if no snapshot or no change.
+async function get24hDelta(marketId: string, currentYesPrice: number): Promise<string> {
+  try {
+    const snap = await redis.get(`bayse:snap:${marketId}`);
+    if (!snap) return "";
+    const prev = parseFloat(snap);
+    if (!isFinite(prev) || prev === currentYesPrice) return "";
+    const diffNgn = Math.round((currentYesPrice - prev) * 100);
+    if (diffNgn === 0) return "";
+    return diffNgn > 0 ? `▲ ₦${diffNgn}` : `▼ ₦${Math.abs(diffNgn)}`;
+  } catch {
+    return "";
+  }
+}
+
+// ── Jupiter-style screens (A, B, C) ──────────────────────────────────────────
+
+const TRENDING_PAGE_SIZE = 5;
+
+// Screen A — Trending list
+function buildTrendingText(events: BayseEvent[], page: number): string {
+  const total = events.length;
+  const totalPages = Math.max(1, Math.ceil(total / TRENDING_PAGE_SIZE));
+  const slice = events.slice((page - 1) * TRENDING_PAGE_SIZE, page * TRENDING_PAGE_SIZE);
+  const lines: string[] = [`🔥 <b>Trending Markets</b>\n`];
+  slice.forEach((e, i) => {
+    const num = (page - 1) * TRENDING_PAGE_SIZE + i + 1;
+    const emoji = categoryEmoji(e.category);
+    const vol = fmtVol(e.liquidity);
+    lines.push(
+      `${num}) ${emoji} <b>${escapeHtml(e.title)}</b>`,
+      `   └ Volume: ${vol || "—"}  ·  24h —`
+    );
+  });
+  lines.push(`\nPage ${page}/${totalPages}`);
+  return lines.join("\n");
+}
+
+function buildTrendingKeyboard(events: BayseEvent[], page: number): InlineKeyboard {
+  const total = events.length;
+  const totalPages = Math.max(1, Math.ceil(total / TRENDING_PAGE_SIZE));
+  const slice = events.slice((page - 1) * TRENDING_PAGE_SIZE, page * TRENDING_PAGE_SIZE);
+  const kb = new InlineKeyboard();
+
+  // Quick-jump number buttons
+  const row: Array<{ text: string; data: string }> = [];
+  slice.forEach((e, i) => {
+    const num = (page - 1) * TRENDING_PAGE_SIZE + i + 1;
+    row.push({ text: String(num), data: `jm:overview:${e.id}:p1` });
+  });
+  if (row.length > 0) {
+    for (const btn of row) kb.text(btn.text, btn.data);
+    kb.row();
+  }
+
+  if (page < totalPages) kb.text(`Next ▶`, `jm:trending:${page + 1}`);
+  if (page > 1) kb.text(`◀ Prev`, `jm:trending:${page - 1}`);
+  if (page < totalPages || page > 1) kb.row();
+
+  kb.text("← Categories", "bm:list");
+  return kb;
+}
+
+// Screen B — Market overview (multi-outcome)
+async function buildMarketOverviewText(event: BayseEvent, page: number): Promise<string> {
+  const marketsPerPage = 4;
+  const total = event.markets.length;
+  const totalPages = Math.max(1, Math.ceil(total / marketsPerPage));
+  const slice = event.markets.slice((page - 1) * marketsPerPage, page * marketsPerPage);
+
+  const closeDate = event.closingDate
+    ? new Date(event.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
+    : "—";
+  const vol = fmtVol(event.liquidity);
+  const sourceUrl = `https://app.bayse.markets/event/${event.id}`;
+
+  const lines: string[] = [
+    `<b>${escapeHtml(event.title)}</b>`,
+    `├ Ends: ${closeDate}`,
+    `├ Volume: ${vol || "—"}  ·  24h —`,
+    `├ OI —  ·  Liq ${vol || "—"}`,
+    `└ <a href="${sourceUrl}">View on Bayse</a>`,
+    "",
+  ];
+
+  const sorted = [...slice].sort((a, b) => b.outcome1Price - a.outcome1Price);
+  const deltas = await Promise.all(sorted.map((m) => get24hDelta(m.id, m.outcome1Price)));
+  sorted.forEach((m, i) => {
+    const num = (page - 1) * marketsPerPage + i + 1;
+    const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+    const delta = deltas[i] ? `  <i>24h YES ${deltas[i]}</i>` : "";
+    lines.push(
+      `${num}) <b>${escapeHtml(label.slice(0, 50))}</b>`,
+      `├ YES: ${formatNgnPrice(m.outcome1Price)}  ·  NO: ${formatNgnPrice(m.outcome2Price)}${delta}`,
+      `└ Volume: —  ·  24h —`
+    );
+  });
+
+  if (totalPages > 1) lines.push(`\nPage ${page}/${totalPages}`);
+  return lines.join("\n");
+}
+
+function buildMarketOverviewKeyboard(event: BayseEvent, page: number): InlineKeyboard {
+  const marketsPerPage = 4;
+  const total = event.markets.length;
+  const totalPages = Math.max(1, Math.ceil(total / marketsPerPage));
+  const slice = [...event.markets]
+    .sort((a, b) => b.outcome1Price - a.outcome1Price)
+    .slice((page - 1) * marketsPerPage, page * marketsPerPage);
+
+  const kb = new InlineKeyboard();
+  for (const m of slice) {
+    const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Outcome";
+    kb.text(escapeHtml(label.slice(0, 30)), `jm:detail:${event.id}:${m.id}:p${page}`).row();
+  }
+
+  if (page < totalPages) kb.text(`More ›`, `jm:overview:${event.id}:p${page + 1}`);
+  if (page > 1) kb.text(`‹ Back`, `jm:overview:${event.id}:p${page - 1}`);
+  if (page < totalPages || page > 1) kb.row();
+
+  const cat = normalizeCategoryKey(event.category);
+  kb.text("← Categories", `bm:cat:${FIXED_CATEGORIES.includes(cat) ? cat : "CRYPTO"}`);
+  return kb;
+}
+
+// Screen C — Outcome detail
+function buildOutcomeDetailText(event: BayseEvent, market: BayseMarket): string {
+  const label = market.outcome1Label && !/^(yes|no)$/i.test(market.outcome1Label)
+    ? market.outcome1Label
+    : market.title || "Yes";
+
+  const closeDate = event.closingDate
+    ? new Date(event.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
+    : "—";
+  const openDate = "—"; // not surfaced by Bayse relay currently
+  const vol = fmtVol(event.liquidity);
+  const yesPrice = formatNgnPrice(market.outcome1Price);
+  const noPrice = formatNgnPrice(market.outcome2Price);
+  const spread = Math.abs(market.outcome1Price - market.outcome2Price);
+
+  return [
+    `<b>${escapeHtml(event.title)}</b>`,
+    `Predicting on: <i>${escapeHtml(label.slice(0, 60))}</i>`,
+    "",
+    `📊 <b>Current Prices</b>`,
+    `├ Yes: ${yesPrice}`,
+    `└ No:  ${noPrice}`,
+    "",
+    `📈 <b>Market Stats</b>`,
+    `├ Volume: ${vol || "—"}  ·  24h —`,
+    `├ Bid —  ·  Ask —  ·  Spread ₦${Math.round(spread * 100)}`,
+    `└ Liquidity ${vol || "—"}`,
+    "",
+    `📅 <b>Timeline</b>`,
+    `├ Open: ${openDate}`,
+    `└ Close: ${closeDate}`,
+    "",
+    `⬆ <b>Top traders</b>`,
+    `├ YES: — · — · —`,
+    `└ NO:  — · — · —`,
+  ].join("\n");
+}
+
+function buildOutcomeDetailKeyboard(event: BayseEvent, market: BayseMarket, backPage: number): InlineKeyboard {
+  const shortKey = `${event.id.slice(0, 4)}${market.id.slice(0, 4)}`;
+  // Ensure the short key is registered so bm:bet: handler can resolve it
+  redis.set(`bayse:mkt:${shortKey}`, `${event.id}:${market.id}`, "EX", 3600).catch(() => null);
+
+  return new InlineKeyboard()
+    .text(`🟢 YES (${formatNgnPrice(market.outcome1Price)})`, `bm:bet:yes:${shortKey}`)
+    .text(`🔴 NO (${formatNgnPrice(market.outcome2Price)})`, `bm:bet:no:${shortKey}`)
+    .row()
+    .text("← Back", `jm:overview:${event.id}:p${backPage}`);
 }
 
 // ── Step 1: Category picker ───────────────────────────────────────────────────
@@ -4184,7 +4392,20 @@ async function clearBayseCustomBetPending(telegramId: number): Promise<void> {
   await redis.del(`bayse:bet:custom:${telegramId}`);
 }
 
-// ── Core bet placement ────────────────────────────────────────────────────────
+// ── Balance source resolver ───────────────────────────────────────────────────
+// Single source of truth for which balance path a category uses.
+// All categories default to "connected_base_market_balance" (Bayse).
+// Any category that should NOT use Bayse must be explicitly listed here.
+const CATEGORY_BALANCE_SOURCE: Record<string, "connected_base_market_balance" | "in_bot_balance"> = {
+  default: "connected_base_market_balance",
+};
+
+export function getBalanceSource(category: string): "connected_base_market_balance" | "in_bot_balance" {
+  const key = category.trim().toUpperCase();
+  return CATEGORY_BALANCE_SOURCE[key] ?? CATEGORY_BALANCE_SOURCE["default"];
+}
+
+
 
 async function placeBayseMarketBet(
   ctx: Context,
@@ -4304,6 +4525,67 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
   if (!ctx.from || !ctx.callbackQuery?.data) return;
   const data = ctx.callbackQuery.data;
 
+  // ── Jupiter-style: Trending list ─────────────────────────────────────────
+  if (data.startsWith("jm:trending:")) {
+    const page = Math.max(1, Number(data.slice("jm:trending:".length)) || 1);
+    try {
+      const events = await getCachedBayseEvents();
+      const sorted = [...events]
+        .filter((e) => Array.isArray(e.markets) && e.markets.length > 0)
+        .sort((a, b) => (b.liquidity ?? 0) - (a.liquidity ?? 0));
+      await editTradePromptMessage(ctx, buildTrendingText(sorted, page), buildTrendingKeyboard(sorted, page), "HTML");
+    } catch (err) {
+      console.error("[jm:trending] failed:", err instanceof Error ? err.message : err);
+      await ctx.reply("Markets temporarily unavailable. Try again in a moment.");
+    }
+    return;
+  }
+
+  // ── Jupiter-style: Market overview ───────────────────────────────────────
+  if (data.startsWith("jm:overview:")) {
+    // format: jm:overview:<eventId>:p<page>
+    const rest = data.slice("jm:overview:".length);
+    const pIdx = rest.lastIndexOf(":p");
+    const eventId = pIdx >= 0 ? rest.slice(0, pIdx) : rest;
+    const page = pIdx >= 0 ? Math.max(1, Number(rest.slice(pIdx + 2)) || 1) : 1;
+    try {
+      const events = await getCachedBayseEvents();
+      const event = events.find((e) => e.id === eventId);
+      if (!event) { await ctx.reply("Market no longer available."); return; }
+      await editTradePromptMessage(ctx, await buildMarketOverviewText(event, page), buildMarketOverviewKeyboard(event, page), "HTML");
+    } catch (err) {
+      console.error("[jm:overview] failed:", err instanceof Error ? err.message : err);
+      await ctx.reply("Markets temporarily unavailable. Try again in a moment.");
+    }
+    return;
+  }
+
+  // ── Jupiter-style: Outcome detail ─────────────────────────────────────────
+  if (data.startsWith("jm:detail:")) {
+    // format: jm:detail:<eventId>:<marketId>:p<backPage>
+    const rest = data.slice("jm:detail:".length);
+    const pIdx = rest.lastIndexOf(":p");
+    const ids = pIdx >= 0 ? rest.slice(0, pIdx) : rest;
+    const backPage = pIdx >= 0 ? Math.max(1, Number(rest.slice(pIdx + 2)) || 1) : 1;
+    // eventId and marketId are both UUIDs with dashes — split at first occurrence of :<uuid>
+    // We stored them as eventId:marketId where marketId is a UUID
+    const colonIdx = ids.indexOf(":");
+    if (colonIdx < 0) { await ctx.reply("Session expired. Try again."); return; }
+    const eventId = ids.slice(0, colonIdx);
+    const marketId = ids.slice(colonIdx + 1);
+    try {
+      const events = await getCachedBayseEvents();
+      const event = events.find((e) => e.id === eventId);
+      const market = event?.markets?.find((m) => m.id === marketId);
+      if (!event || !market) { await ctx.reply("Market no longer available."); return; }
+      await editTradePromptMessage(ctx, buildOutcomeDetailText(event, market), buildOutcomeDetailKeyboard(event, market, backPage), "HTML");
+    } catch (err) {
+      console.error("[jm:detail] failed:", err instanceof Error ? err.message : err);
+      await ctx.reply("Markets temporarily unavailable. Try again in a moment.");
+    }
+    return;
+  }
+
   // ── Category picker (back) ────────────────────────────────────────────────
   if (data === "bm:list") {
     await editTradePromptMessage(ctx, buildCategoryPickerText(), buildCategoryPickerKeyboard(), "HTML");
@@ -4341,12 +4623,27 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
         return;
       }
 
+      // World Cup: route directly into the Jupiter-style market overview (Screen B)
+      // for the highest-liquidity event, so users see the multi-outcome picker.
+      if (wantedCategory === "WORLD CUP") {
+        const topEvent = top3[0];
+        await editTradePromptMessage(
+          ctx,
+          await buildMarketOverviewText(topEvent, 1),
+          buildMarketOverviewKeyboard(topEvent, 1),
+          "HTML"
+        );
+        return;
+      }
+
       await editTradePromptMessage(
         ctx,
         category.toUpperCase() === "WORLD CUP"
           ? buildWcPage(top3, 1).text
           : buildCategoryMarketsText(category, top3),
-        buildCategoryMarketsKeyboard(category, top3),
+        category.toUpperCase() === "WORLD CUP"
+          ? buildWcPage(top3, 1).kb
+          : buildCategoryMarketsKeyboard(category, top3),
         "HTML"
       );
     } catch (err) {
@@ -4395,6 +4692,24 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     const event = events.find((e) => e.id === eventId);
     const market = event?.markets?.find((m) => m.id === marketId);
     if (!event || !market) { await ctx.reply("Market no longer available."); return; }
+
+    // All categories use connected_base_market_balance (Bayse).
+    // If user has no credentials, show the connect prompt instead of failing silently at amount input.
+    const balanceSource = getBalanceSource(event.category);
+    if (balanceSource === "connected_base_market_balance") {
+      const existingKeys = await getBayseCredentials(ctx.from.id).catch(() => null);
+      if (!existingKeys) {
+        await editTradePromptMessage(
+          ctx,
+          `🔗 <b>Connect your Bayse account to trade</b>\n\nYou need a connected Bayse account to place trades on any market.\n\nUse /connectbayse — it only takes a minute.`,
+          new InlineKeyboard()
+            .row()
+            .text("← Back", `bm:cat:${FIXED_CATEGORIES.includes(normalizeCategoryKey(event.category)) ? normalizeCategoryKey(event.category) : "CRYPTO"}`),
+          "HTML"
+        );
+        return;
+      }
+    }
 
     await saveBayseBetState(ctx.from.id, { eventId, marketId, side });
     await saveBayseCustomBetPending(ctx.from.id);

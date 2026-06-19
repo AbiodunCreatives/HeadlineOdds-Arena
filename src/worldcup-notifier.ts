@@ -105,7 +105,7 @@ async function sendWorldCupNotifications(): Promise<void> {
     lines.push("\nTrade YES or NO on today's World Cup matches 👇");
     const text = lines.join("\n");
 
-    const keyboard = new InlineKeyboard().text("⚽ Trade Now", "bm:cat:SPORTS");
+    const keyboard = new InlineKeyboard().text("🏆 Trade World Cup", "bm:cat:WORLD CUP");
 
     const users = await listAllUsers();
     let sent = 0;

@@ -43,6 +43,7 @@ import {
   handleBayseConnect,
   handleBayseConnectTextInput,
   handleBayseConnectCallback,
+  handleTrending,
 } from "./bot/handlers/league.ts";
 import { handleSupportQuestion } from "./bot/handlers/support.ts";
 import { config } from "./config.ts";
@@ -230,6 +231,7 @@ bot.command("sweepbalances", wrap(handleSweepBalances));
 bot.command("createmarket", wrap(handleCreateMarket));
 bot.command("resolvemarket", wrap(handleResolveMarket));
 bot.command("markets", wrap(handleMarkets));
+bot.command("trending", wrap(handleTrending));
 bot.command("portfolio", wrap(handlePortfolio));
 bot.command("connectbayse", wrap(handleBayseConnect));
 bot.callbackQuery(/^bayse:disconnect/, wrap(handleBayseConnectCallback));
@@ -240,6 +242,7 @@ bot.callbackQuery(/^bm:sell:/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:setsl:/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:settp:/, wrap(handlePortfolioCallback));
 bot.callbackQuery(/^bm:/, wrap(handleMarketsCallback));
+bot.callbackQuery(/^jm:/, wrap(handleMarketsCallback));
 bot.callbackQuery(/^flt:/, wrap(handleFantasyLeagueTrade));
 bot.callbackQuery(/^(start|lobby|arena|funds|wallet|offramp|cc):/, wrap(handleFantasyLeagueUiAction));
 bot.callbackQuery("fantasy:join:confirm", wrap(handleFantasyJoinConfirm));
