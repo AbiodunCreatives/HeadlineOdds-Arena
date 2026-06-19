@@ -251,14 +251,15 @@ bot.on("message:text", async (ctx, next) => {
   const handled = await handleFantasyTextInput(ctx);
   if (handled) return;
 
+  // Bayse market custom bet amount — must run before prediction market handler
+  // to avoid stale pm:bet:custom state stealing the input
+  if (await handleBayseCustomBetInput(ctx)) return;
+
   // Prediction market custom bet amount
   if (await handleMarketBetCustom(ctx)) return;
 
   // Bayse account connect flow (email / password steps)
   if (await handleBayseConnectTextInput(ctx)) return;
-
-  // Bayse market custom bet amount
-  if (await handleBayseCustomBetInput(ctx)) return;
 
   // Bayse SL/TP text input
   if (await handleBayseSlTpInput(ctx)) return;

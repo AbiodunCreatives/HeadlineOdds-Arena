@@ -2530,7 +2530,7 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
 
   // Bayse market bet amount takes priority — don't intercept with arena flows
   if (await hasBayseCustomBetPending(ctx.from.id)) {
-    return false;
+    return handleBayseCustomBetInput(ctx);
   }
 
   // Custom arena entry fee (dev users only)
@@ -3797,6 +3797,8 @@ export async function handleMarketBetAmount(ctx: Context): Promise<void> {
 export async function handleMarketBetCustom(ctx: Context): Promise<boolean> {
   if (!ctx.from) return false;
   if (!(await hasPendingMarketBetCustom(ctx.from.id))) return false;
+  // Never steal input destined for a Bayse market bet
+  if (await hasBayseCustomBetPending(ctx.from.id)) return false;
 
   const text = (ctx.message?.text ?? "").replace(/[^0-9]/g, "");
   const ngnAmount = Number.parseInt(text, 10);
@@ -3898,8 +3900,46 @@ async function getCachedBayseEvents(): Promise<BayseEvent[]> {
   throw lastError;
 }
 
+const BAYSE_WC_CACHE_KEY = "bayse:wc:cache";
+const BAYSE_WC_CACHE_TTL = 120; // 2 minutes — match listings change frequently
+
+async function getCachedWcEvents(): Promise<BayseEvent[]> {
+  try {
+    const cached = await redis.get(BAYSE_WC_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached) as unknown;
+      if (Array.isArray(parsed)) return parsed as BayseEvent[];
+    }
+  } catch { /* ignore */ }
+
+  // Fetch with a large size to get all WC events (outright + all scheduled matches)
+  const events = await listBayseEvents({ category: "WORLD CUP", size: 200 });
+  if (events.length > 0) {
+    redis.set(BAYSE_WC_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_WC_CACHE_TTL).catch(() => null);
+  }
+  return events;
+}
+
 // Store YES price snapshots for 24h delta calculation.
 // Key: bayse:snap:<marketId>  Value: price (float string)  TTL: 25h (NX = only set if not already set)
+
+// Per-category fetch with dedicated cache — avoids categories missing from the mixed global 100-event cache
+async function getCachedCategoryEvents(category: string): Promise<BayseEvent[]> {
+  const key = `bayse:cat:${category.toUpperCase()}`;
+  try {
+    const cached = await redis.get(key);
+    if (cached) {
+      const parsed = JSON.parse(cached) as unknown;
+      if (Array.isArray(parsed)) return parsed as BayseEvent[];
+    }
+  } catch { /* ignore */ }
+  const events = await listBayseEvents({ category, size: 50 });
+  if (events.length > 0) {
+    redis.set(key, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL).catch(() => null);
+    snapshotMarketPrices(events).catch(() => null);
+  }
+  return events;
+}
 async function snapshotMarketPrices(events: BayseEvent[]): Promise<void> {
   const pipe = redis.pipeline();
   for (const e of events) {
@@ -3938,10 +3978,10 @@ function buildTrendingText(events: BayseEvent[], page: number): string {
   slice.forEach((e, i) => {
     const num = (page - 1) * TRENDING_PAGE_SIZE + i + 1;
     const emoji = categoryEmoji(e.category);
-    const vol = fmtVol(e.liquidity);
+    const liq = fmtVol(e.liquidity);
     lines.push(
       `${num}) ${emoji} <b>${escapeHtml(e.title)}</b>`,
-      `   └ Volume: ${vol || "—"}  ·  24h —`
+      `   ├ Trades: ${e.totalOrders ?? 0}  ·  Liq: ${liq || "₦0"}`
     );
   });
   lines.push(`\nPage ${page}/${totalPages}`);
@@ -3983,15 +4023,11 @@ async function buildMarketOverviewText(event: BayseEvent, page: number): Promise
   const closeDate = event.closingDate
     ? new Date(event.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
     : "—";
-  const vol = fmtVol(event.liquidity);
-  const sourceUrl = `https://app.bayse.markets/event/${event.id}`;
 
   const lines: string[] = [
     `<b>${escapeHtml(event.title)}</b>`,
-    `├ Ends: ${closeDate}`,
-    `├ Volume: ${vol || "—"}  ·  24h —`,
-    `├ OI —  ·  Liq ${vol || "—"}`,
-    `└ <a href="${sourceUrl}">View on Bayse</a>`,
+    `├ Trades: ${event.totalOrders ?? 0}`,
+    `└ Liquidity: ${fmtVol(event.liquidity) || "₦0"} · Ends ${closeDate}`,
     "",
   ];
 
@@ -4000,11 +4036,10 @@ async function buildMarketOverviewText(event: BayseEvent, page: number): Promise
   sorted.forEach((m, i) => {
     const num = (page - 1) * marketsPerPage + i + 1;
     const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
-    const delta = deltas[i] ? `  <i>24h YES ${deltas[i]}</i>` : "";
+    const delta = deltas[i] ? `  <i>${deltas[i]}</i>` : "";
     lines.push(
       `${num}) <b>${escapeHtml(label.slice(0, 50))}</b>`,
-      `├ YES: ${formatNgnPrice(m.outcome1Price)}  ·  NO: ${formatNgnPrice(m.outcome2Price)}${delta}`,
-      `└ Volume: —  ·  24h —`
+      `├ YES: ${formatNgnPrice(m.outcome1Price)} · NO: ${formatNgnPrice(m.outcome2Price)}${delta}`
     );
   });
 
@@ -4046,32 +4081,14 @@ function buildOutcomeDetailText(event: BayseEvent, market: BayseMarket): string 
   const closeDate = event.closingDate
     ? new Date(event.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
     : "—";
-  const openDate = "—"; // not surfaced by Bayse relay currently
-  const vol = fmtVol(event.liquidity);
-  const yesPrice = formatNgnPrice(market.outcome1Price);
-  const noPrice = formatNgnPrice(market.outcome2Price);
-  const spread = Math.abs(market.outcome1Price - market.outcome2Price);
 
   return [
     `<b>${escapeHtml(event.title)}</b>`,
-    `Predicting on: <i>${escapeHtml(label.slice(0, 60))}</i>`,
+    `Outcome: <i>${escapeHtml(label.slice(0, 60))}</i>`,
     "",
-    `📊 <b>Current Prices</b>`,
-    `├ Yes: ${yesPrice}`,
-    `└ No:  ${noPrice}`,
-    "",
-    `📈 <b>Market Stats</b>`,
-    `├ Volume: ${vol || "—"}  ·  24h —`,
-    `├ Bid —  ·  Ask —  ·  Spread ₦${Math.round(spread * 100)}`,
-    `└ Liquidity ${vol || "—"}`,
-    "",
-    `📅 <b>Timeline</b>`,
-    `├ Open: ${openDate}`,
-    `└ Close: ${closeDate}`,
-    "",
-    `⬆ <b>Top traders</b>`,
-    `├ YES: — · — · —`,
-    `└ NO:  — · — · —`,
+    `├ YES: ${formatNgnPrice(market.outcome1Price)} · NO: ${formatNgnPrice(market.outcome2Price)}`,
+    `├ Trades: ${event.totalOrders ?? 0}`,
+    `└ Liquidity: ${fmtVol(event.liquidity) || "₦0"} · Ends ${closeDate}`,
   ].join("\n");
 }
 
@@ -4152,23 +4169,32 @@ function isWorldCupEvent(title: string): boolean {
   return t.includes("world cup") || t.includes("fifa") || t.includes("wc 2026") || t.includes("wc2026");
 }
 
-function buildCategoryMarketsText(category: string, _events: BayseEvent[]): string {
-  if (category.toUpperCase() === "WORLD CUP") {
-    return `🏆 <b>FIFA World Cup 2026</b>  ·  Live Markets`;
-  }
-  if (category.toUpperCase() === "SPORTS") {
-    return `⚽ <b>Sports</b>  ·  Live Markets`;
-  }
-  return `${categoryEmoji(category)} <b>${escapeHtml(category)}</b>  ·  Top markets`;
+function buildCategoryMarketsText(category: string, events: BayseEvent[]): string {
+  if (category.toUpperCase() === "SPORTS") return `⚽ <b>Sports</b>  ·  Live Markets`;
+  const emoji = categoryEmoji(category);
+  const lines: string[] = [`${emoji} <b>${escapeHtml(category)}</b>  ·  Live Markets\n`];
+  events.forEach((e, idx) => {
+    const sorted = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 4);
+    const endsDate = e.closingDate
+      ? new Date(e.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
+      : "—";
+    lines.push(`${idx + 1}) <b>${escapeHtml(e.title)}</b>`);
+    sorted.forEach((m, i) => {
+      const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+      lines.push(`├ ${escapeHtml(label.slice(0, 40))}: YES ${formatNgnPrice(m.outcome1Price)} · NO ${formatNgnPrice(m.outcome2Price)}`);
+    });
+    lines.push(`├ Trades: ${e.totalOrders ?? 0}  ·  Liq: ${fmtVol(e.liquidity) || "₦0"}`, `└ Ends ${endsDate}`, ``);
+  });
+  return lines.join("\n");
 }
 
 // ── WC pagination helpers ────────────────────────────────────────────────────
 
 function fmtVol(liquidity: number): string {
   if (!Number.isFinite(liquidity) || liquidity <= 0) return "";
-  if (liquidity >= 1_000_000) return `$${(liquidity / 1_000_000).toFixed(2)}M`;
-  if (liquidity >= 1_000) return `$${Math.round(liquidity / 1_000)}K`;
-  return `$${Math.round(liquidity)}`;
+  if (liquidity >= 1_000_000) return `₦${(liquidity / 1_000_000).toFixed(2)}M`;
+  if (liquidity >= 1_000) return `₦${Math.round(liquidity / 1_000)}K`;
+  return `₦${Math.round(liquidity)}`;
 }
 
 function addMarketsBlock(
@@ -4213,46 +4239,151 @@ function buildEventBlock(
   }
 }
 
-function buildWcPage(events: BayseEvent[], page: number): { text: string; kb: InlineKeyboard } {
-  const kb = new InlineKeyboard();
-  const lines: string[] = [];
+// ── WC event classification ──────────────────────────────────────────────────
 
-  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" });
-  lines.push(`🌍 <b>FIFA World Cup 2026</b> — ${today}  ·  Page ${page}/3\n`);
+function isWcOutright(e: BayseEvent): boolean {
+  return /win the 2026|who will win.*world cup/i.test(e.title);
+}
 
-  const winner = events.find((e) => /win the 2026/i.test(e.title));
-  const groups = events
-    .filter((e) => /group [a-z] winner/i.test(e.title))
-    .sort((a, b) => a.title.localeCompare(b.title));
-  const others = events.filter(
-    (e) => !/win the 2026/i.test(e.title) && !/group [a-z] winner/i.test(e.title)
+function isWcMatch(e: BayseEvent): boolean {
+  return /\bvs\.?\b/i.test(e.title) && !isWcOutright(e);
+}
+
+// ── WC block renderers ───────────────────────────────────────────────────────
+
+const WC_CANDIDATES_PER_PAGE = 5;
+
+function buildOutrightBlock(lines: string[], kb: InlineKeyboard, e: BayseEvent, candPage: number): void {
+  const sorted = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price);
+  const totalCandPages = Math.max(1, Math.ceil(sorted.length / WC_CANDIDATES_PER_PAGE));
+  const slice = sorted.slice((candPage - 1) * WC_CANDIDATES_PER_PAGE, candPage * WC_CANDIDATES_PER_PAGE);
+
+  const endsDate = e.closingDate
+    ? new Date(e.closingDate).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" })
+    : "—";
+
+  lines.push(`🏆 <b>${escapeHtml(e.title)}</b>`);
+  slice.forEach((m, i) => {
+    const num = (candPage - 1) * WC_CANDIDATES_PER_PAGE + i + 1;
+    const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+    lines.push(
+      `${num}) <b>${escapeHtml(label.slice(0, 50))}</b>`,
+      `├ YES: ${formatNgnPrice(m.outcome1Price)} · NO: ${formatNgnPrice(m.outcome2Price)}`
+    );
+  });
+  lines.push(
+    ``,
+    `├ Trades: ${e.totalOrders ?? 0}`,
+    `└ Liquidity: ${fmtVol(e.liquidity) || "₦0"} · Ends ${endsDate}`
   );
 
+  // Inline YES/NO buttons per candidate
+  for (const m of slice) {
+    const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+    kb.text(`YES-${label.slice(0, 15)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+      .text(`NO-${label.slice(0, 15)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+      .row();
+  }
+  if (totalCandPages > 1) {
+    if (candPage > 1) kb.text(`◀ Prev`, `bm:wc:out:${e.id}:${candPage - 1}`);
+    if (candPage < totalCandPages) kb.text(`Next ▶`, `bm:wc:out:${e.id}:${candPage + 1}`);
+    kb.row();
+  }
+}
+
+function buildMatchBlock(lines: string[], kb: InlineKeyboard, e: BayseEvent): void {
+  const kickoff = e.openingDate
+    ? new Date(e.openingDate).toLocaleString("en-NG", {
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+        timeZone: "Africa/Lagos", hour12: false,
+      })
+    : e.closingDate
+      ? new Date(e.closingDate).toLocaleString("en-NG", {
+          day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+          timeZone: "Africa/Lagos", hour12: false,
+        })
+      : "—";
+
+  lines.push(`\n⚽ <b>${escapeHtml(e.title)}</b>`, kickoff, ``);
+
+  const prefixes = e.markets.map((_, i, arr) => i === arr.length - 1 ? "└" : "├");
+  e.markets.forEach((m, i) => {
+    const label = m.title?.trim() && !/^(yes|no)$/i.test(m.title.trim())
+      ? m.title.trim()
+      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : `Outcome ${i + 1}`);
+    const prob = Math.round(m.outcome1Price * 100);
+    const mult = m.outcome1Price > 0 ? (1 / m.outcome1Price).toFixed(2) : "—";
+    lines.push(`${prefixes[i]} ${escapeHtml(label.slice(0, 30))}: ${prob}% · Yes - ${mult}x`);
+  });
+
+  lines.push(``, `├ Trades: ${e.totalOrders ?? 0}`, `└ Liquidity: ${fmtVol(e.liquidity) || "₦0"}`);
+
+  // Inline Yes buttons per outcome
+  for (const m of e.markets) {
+    const label = m.title?.trim() && !/^(yes|no)$/i.test(m.title.trim())
+      ? m.title.trim()
+      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.id.slice(0, 6));
+    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+    kb.text(`Yes-${label.slice(0, 20)}`, `bm:bet:yes:${shortKey}`);
+  }
+  kb.row();
+}
+
+const WC_EVENTS_PER_PAGE = 3;
+
+function buildWcPage(allWcEvents: BayseEvent[], page: number): { text: string; kb: InlineKeyboard; totalPages: number } {
+  const outright = allWcEvents.find(isWcOutright);
+  const matches = allWcEvents
+    .filter(isWcMatch)
+    .sort((a, b) => {
+      const ta = a.openingDate ? Date.parse(a.openingDate) : Date.parse(a.closingDate ?? "");
+      const tb = b.openingDate ? Date.parse(b.openingDate) : Date.parse(b.closingDate ?? "");
+      return ta - tb;
+    });
+  const others = allWcEvents.filter((e) => !isWcOutright(e) && !isWcMatch(e));
+
+  // Page 1 always = outright block (with its own candidate pagination via bm:wc:out:)
+  // Pages 2..N = match blocks (WC_EVENTS_PER_PAGE per page), then others
+  const matchAndOther = [...matches, ...others];
+  const matchPages = Math.max(1, Math.ceil(matchAndOther.length / WC_EVENTS_PER_PAGE));
+  const totalPages = 1 + matchPages;
+
+  const kb = new InlineKeyboard();
+  const lines: string[] = [];
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" });
+  lines.push(`🌍 <b>FIFA World Cup 2026</b> — ${today}  ·  Page ${page}/${totalPages}\n`);
+
   if (page === 1) {
-    if (winner) {
-      const top6 = [...winner.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 6);
-      buildEventBlock(lines, kb, 1, winner, top6);
+    if (outright) {
+      buildOutrightBlock(lines, kb, outright, 1);
+    } else {
+      lines.push(`No outright market available yet.`);
     }
-    kb.row().text(`More ›`, `bm:wc:2`);
-  } else if (page === 2) {
-    lines.push(`⚽️ <b>Group Winners — A to C</b>`);
-    groups.slice(0, 3).forEach((g, i) => buildEventBlock(lines, kb, i + 1, g, g.markets.slice(0, 4)));
-    kb.row().text(`‹ Back`, `bm:wc:1`).text(`More ›`, `bm:wc:3`);
+    if (totalPages > 1) kb.text(`Matches ›`, `bm:wc:2`).row();
   } else {
-    lines.push(`⚽️ <b>Group Winners — D to F</b>`);
-    groups.slice(3, 6).forEach((g, i) => buildEventBlock(lines, kb, i + 1, g, g.markets.slice(0, 4)));
-    if (others.length > 0) {
-      lines.push(`\n📊 <b>Other Markets</b>`);
-      others.slice(0, 3).forEach((e, i) => {
-        const top2 = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 2);
-        buildEventBlock(lines, kb, i + 1, e, top2);
-      });
+    const matchPage = page - 1; // 1-indexed within matchAndOther
+    const slice = matchAndOther.slice((matchPage - 1) * WC_EVENTS_PER_PAGE, matchPage * WC_EVENTS_PER_PAGE);
+    if (slice.length === 0) {
+      lines.push(`No more markets.`);
+    } else {
+      for (const e of slice) {
+        if (isWcMatch(e)) {
+          buildMatchBlock(lines, kb, e);
+        } else {
+          buildEventBlock(lines, kb, 1, e, e.markets.slice(0, 3));
+        }
+      }
     }
-    kb.row().text(`‹ Back`, `bm:wc:2`);
+    kb.text(`‹ Back`, `bm:wc:${page - 1}`);
+    if (page < totalPages) kb.text(`More ›`, `bm:wc:${page + 1}`);
+    kb.row();
   }
 
-  kb.row().text(`← Categories`, `bm:list`);
-  return { text: lines.join("\n"), kb };
+  kb.text(`← Categories`, `bm:list`);
+  return { text: lines.join("\n"), kb, totalPages };
 }
 
 // Sports: one block per event — list all markets as text rows, one YES/NO pair per event
@@ -4267,38 +4398,21 @@ function buildSportsMarketsKeyboard(events: BayseEvent[]): InlineKeyboard {
 }
 
 function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): InlineKeyboard {
-  if (category.toUpperCase() === "WORLD CUP") {
-    return buildWcPage(events, 1).kb;
-  }
-  if (category.toUpperCase() === "SPORTS") {
-    return buildSportsMarketsKeyboard(events);
-  }
+  if (category.toUpperCase() === "WORLD CUP") return buildWcPage(events, 1).kb;
+  if (category.toUpperCase() === "SPORTS") return buildSportsMarketsKeyboard(events);
 
   const kb = new InlineKeyboard();
-  const rows = expandEventMarkets(events);
-
-  rows.forEach(({ event: e, market: m }) => {
-    const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
-    redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-
-    const isGenericLabel = !m.outcome1Label.trim() || /^(yes|no|true|false)$/i.test(m.outcome1Label.trim());
-    const hasCandidateTitle = m.title && m.title.trim() &&
-      m.title.trim().toLowerCase() !== e.title.trim().toLowerCase();
-
-    let titleLine: string;
-    if (hasCandidateTitle) {
-      titleLine = `${e.title.slice(0, 30)} — ${m.title.slice(0, 20)}`;
-    } else {
-      const reframed = reframeTitleWithCandidate(e.title, m.outcome1Label);
-      titleLine = (reframed !== e.title || isGenericLabel) ? reframed : `${e.title} — ${m.outcome1Label}`;
+  for (const e of events) {
+    const sorted = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 4);
+    for (const m of sorted) {
+      const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+      const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
+      redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
+      kb.text(`YES — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
+        .text(`NO — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+        .row();
     }
-
-    kb.text(`📌 ${titleLine.slice(0, 55)}`, `bm:noop`).row();
-    kb.text(`YES  ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO  ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
-      .row();
-  });
-
+  }
   kb.text("← Categories", "bm:list");
   return kb;
 }
@@ -4309,7 +4423,7 @@ function buildQuoteText(event: BayseEvent, market: BayseMarket, side: "yes" | "n
   const price = side === "yes" ? market.outcome1Price : market.outcome2Price;
   const oppPrice = side === "yes" ? market.outcome2Price : market.outcome1Price;
   const sideLabel = side === "yes" ? "YES" : "NO";
-  const minBet = Math.ceil(price * 100);
+  const minBet = 100;
   const exShares = Math.floor(2000 / (price * 100));
   const hasCandidateTitle = market.title?.trim() &&
     market.title.trim().toLowerCase() !== event.title.trim().toLowerCase();
@@ -4428,7 +4542,11 @@ async function placeBayseMarketBet(
   const adminRouted = !userKeys;
 
   const events = await getCachedBayseEvents();
-  const event = events.find((e) => e.id === eventId);
+  let event = events.find((e) => e.id === eventId);
+  if (!event) {
+    const wcEvents = await getCachedWcEvents().catch(() => [] as BayseEvent[]);
+    event = wcEvents.find((e) => e.id === eventId);
+  }
   const market = event?.markets.find((m) => m.id === marketId);
 
   if (!event || !market) {
@@ -4442,7 +4560,7 @@ async function placeBayseMarketBet(
   const shares = sharesForAmount(ngnAmount, price);
 
   if (shares < 1) {
-    await ctx.reply(`Minimum bet is ${c(`₦${Math.ceil(price * 100)} (1 share)`)}.`, { parse_mode: "HTML" });
+    await ctx.reply(`Minimum bet is ${c("₦100")}.`, { parse_mode: "HTML" });
     return;
   }
 
@@ -4604,54 +4722,33 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
   if (data.startsWith("bm:cat:")) {
     const category = normalizeCategoryKey(data.slice("bm:cat:".length));
     try {
-      const events = await getCachedBayseEvents();
       const wantedCategory = category.toUpperCase();
+
+      // World Cup: dedicated fetch (outright + matches)
+      if (wantedCategory === "WORLD CUP") {
+        const wcEvents = await getCachedWcEvents();
+        if (wcEvents.length === 0) {
+          await editTradePromptMessage(ctx, `No live World Cup markets right now.\n\nPick another category:`, buildCategoryPickerKeyboard(), "Markdown");
+          return;
+        }
+        const { text, kb } = buildWcPage(wcEvents, 1);
+        await editTradePromptMessage(ctx, text, kb, "HTML");
+        return;
+      }
+
+      // All other categories: per-category fetch
+      const filtered = await getCachedCategoryEvents(wantedCategory);
       const isSports = wantedCategory === "SPORTS";
-      const filtered = events.filter((e) =>
-        normalizeCategoryKey(e.category) === wantedCategory &&
-        Array.isArray(e.markets) &&
-        e.markets.length > 0
-      );
-      const top3 = filtered
-        .sort((a, b) =>
-          (Number.isFinite(b.liquidity) ? b.liquidity : 0) -
-          (Number.isFinite(a.liquidity) ? a.liquidity : 0)
-        )
+      const top = filtered
+        .sort((a, b) => (Number.isFinite(b.liquidity) ? b.liquidity : 0) - (Number.isFinite(a.liquidity) ? a.liquidity : 0))
         .slice(0, isSports ? 10 : 5);
 
-      if (top3.length === 0) {
-        await editTradePromptMessage(
-          ctx,
-          `No live ${category} markets right now.\n\nPick another category:`,
-          buildCategoryPickerKeyboard(),
-          "Markdown"
-        );
+      if (top.length === 0) {
+        await editTradePromptMessage(ctx, `No live ${category} markets right now.\n\nPick another category:`, buildCategoryPickerKeyboard(), "Markdown");
         return;
       }
 
-      // World Cup: route directly into the Jupiter-style market overview (Screen B)
-      // for the highest-liquidity event, so users see the multi-outcome picker.
-      if (wantedCategory === "WORLD CUP") {
-        const topEvent = top3[0];
-        await editTradePromptMessage(
-          ctx,
-          await buildMarketOverviewText(topEvent, 1),
-          buildMarketOverviewKeyboard(topEvent, 1),
-          "HTML"
-        );
-        return;
-      }
-
-      await editTradePromptMessage(
-        ctx,
-        category.toUpperCase() === "WORLD CUP"
-          ? buildWcPage(top3, 1).text
-          : buildCategoryMarketsText(category, top3),
-        category.toUpperCase() === "WORLD CUP"
-          ? buildWcPage(top3, 1).kb
-          : buildCategoryMarketsKeyboard(category, top3),
-        "HTML"
-      );
+      await editTradePromptMessage(ctx, buildCategoryMarketsText(category, top), buildCategoryMarketsKeyboard(category, top), "HTML");
     } catch (err) {
       console.error("[bayse] category load failed:", err instanceof Error ? err.message : err);
       await ctx.reply("Markets are temporarily unavailable. Please try again in a minute.");
@@ -4661,13 +4758,36 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
 
   // ── WC page navigation ────────────────────────────────────────────────────
   if (data.startsWith("bm:wc:")) {
+    // bm:wc:<page>  or  bm:wc:out:<eventId>:<candPage>
+    if (data.startsWith("bm:wc:out:")) {
+      // Outright candidate pagination — not a full page nav, just re-render page 1 with different candPage
+      const rest = data.slice("bm:wc:out:".length);
+      const lastColon = rest.lastIndexOf(":");
+      const candPage = lastColon >= 0 ? Math.max(1, Number(rest.slice(lastColon + 1)) || 1) : 1;
+      try {
+        const wcEvents = await getCachedWcEvents();
+        if (wcEvents.length === 0) { await ctx.answerCallbackQuery(); return; }
+        const outright = wcEvents.find(isWcOutright);
+        if (!outright) { await ctx.answerCallbackQuery(); return; }
+        const kb = new InlineKeyboard();
+        const lines: string[] = [];
+        const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" });
+        const { totalPages } = buildWcPage(wcEvents, 1);
+        lines.push(`🌍 <b>FIFA World Cup 2026</b> — ${today}  ·  Page 1/${totalPages}\n`);
+        buildOutrightBlock(lines, kb, outright, candPage);
+        if (totalPages > 1) kb.text(`Matches ›`, `bm:wc:2`).row();
+        kb.text(`← Categories`, `bm:list`);
+        await editTradePromptMessage(ctx, lines.join("\n"), kb, "HTML");
+      } catch (err) {
+        console.error("[wc:out] page load failed:", err instanceof Error ? err.message : err);
+        await ctx.reply("Markets are temporarily unavailable. Please try again.");
+      }
+      return;
+    }
     const page = Number(data.slice("bm:wc:".length));
-    if (![1, 2, 3].includes(page)) { await ctx.answerCallbackQuery(); return; }
+    if (!Number.isFinite(page) || page < 1) { await ctx.answerCallbackQuery(); return; }
     try {
-      const events = await getCachedBayseEvents();
-      const wcEvents = events.filter(
-        (e) => normalizeCategoryKey(e.category) === "WORLD CUP" && Array.isArray(e.markets) && e.markets.length > 0
-      );
+      const wcEvents = await getCachedWcEvents();
       if (wcEvents.length === 0) {
         await editTradePromptMessage(ctx, `No live World Cup markets right now.\n\nPick another category:`, buildCategoryPickerKeyboard(), "Markdown");
         return;
@@ -4695,7 +4815,12 @@ export async function handleMarketsCallback(ctx: Context): Promise<void> {
     if (!eventId || !marketId) return;
 
     const events = await getCachedBayseEvents().catch(() => [] as BayseEvent[]);
-    const event = events.find((e) => e.id === eventId);
+    let event = events.find((e) => e.id === eventId);
+    if (!event) {
+      // WC match events may only be in the WC cache
+      const wcEvents = await getCachedWcEvents().catch(() => [] as BayseEvent[]);
+      event = wcEvents.find((e) => e.id === eventId);
+    }
     const market = event?.markets?.find((m) => m.id === marketId);
     if (!event || !market) { await ctx.reply("Market no longer available."); return; }
 

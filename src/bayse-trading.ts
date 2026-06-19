@@ -76,6 +76,7 @@ export interface BayseEvent {
   title: string;
   category: string;
   status: string;
+  openingDate?: string;
   closingDate: string;
   liquidity: number;
   totalOrders: number;
