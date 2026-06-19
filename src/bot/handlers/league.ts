@@ -3912,12 +3912,14 @@ async function getCachedWcEvents(): Promise<BayseEvent[]> {
     }
   } catch { /* ignore */ }
 
-  // Fetch with a large size to get all WC events (outright + all scheduled matches)
-  const events = await listBayseEvents({ category: "WORLD CUP", size: 200 });
-  if (events.length > 0) {
-    redis.set(BAYSE_WC_CACHE_KEY, JSON.stringify(events), "EX", BAYSE_WC_CACHE_TTL).catch(() => null);
+  // Fetch without category filter — Bayse API doesn't reliably support category param.
+  // Filter client-side by category string.
+  const events = await listBayseEvents({ size: 200 });
+  const wcEvents = events.filter((e) => normalizeCategoryKey(e.category) === "WORLD CUP");
+  if (wcEvents.length > 0) {
+    redis.set(BAYSE_WC_CACHE_KEY, JSON.stringify(wcEvents), "EX", BAYSE_WC_CACHE_TTL).catch(() => null);
   }
-  return events;
+  return wcEvents;
 }
 
 // Store YES price snapshots for 24h delta calculation.
@@ -3933,7 +3935,9 @@ async function getCachedCategoryEvents(category: string): Promise<BayseEvent[]> 
       if (Array.isArray(parsed)) return parsed as BayseEvent[];
     }
   } catch { /* ignore */ }
-  const events = await listBayseEvents({ category, size: 50 });
+  // Fetch all, filter client-side — Bayse API category param is unreliable
+  const all = await getCachedBayseEvents();
+  const events = all.filter((e) => normalizeCategoryKey(e.category) === category.toUpperCase());
   if (events.length > 0) {
     redis.set(key, JSON.stringify(events), "EX", BAYSE_MARKETS_CACHE_TTL).catch(() => null);
     snapshotMarketPrices(events).catch(() => null);
@@ -4197,34 +4201,21 @@ function fmtVol(liquidity: number): string {
   return `₦${Math.round(liquidity)}`;
 }
 
-function addMarketsBlock(
-  kb: InlineKeyboard,
-  e: BayseEvent,
-  markets: BayseMarket[]
-): void {
-  for (const m of markets) {
-    const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
-      ? m.title.trim()
-      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label.trim()) ? m.outcome1Label.trim() : e.title.trim());
+function addMarketsBlock(kb: InlineKeyboard, e: BayseEvent, markets: BayseMarket[], startNum = 1): void {
+  markets.forEach((m, i) => {
+    const num = startNum + i;
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`YES ${label.slice(0, 20)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO ${label.slice(0, 20)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`🟢 Yes #${num}`, `bm:bet:yes:${shortKey}`)
+      .text(`🔴 No #${num}`, `bm:bet:no:${shortKey}`)
       .row();
-  }
+  });
 }
 
-function buildEventBlock(
-  lines: string[],
-  kb: InlineKeyboard,
-  num: number,
-  e: BayseEvent,
-  markets: BayseMarket[]
-): void {
+function buildEventBlock(lines: string[], kb: InlineKeyboard, num: number, e: BayseEvent, markets: BayseMarket[]): void {
   const vol = fmtVol(e.liquidity);
-  lines.push(`\n${num}) 🏆 <b>${escapeHtml(e.title)}</b>${vol ? `\n├ Vol: ${vol}` : ""}`);
-  for (let i = 0; i < markets.length; i++) {
-    const m = markets[i];
+  lines.push(`\n${num}) 🏆 <b>${escapeHtml(e.title)}</b>${vol ? `\n├ Liq: ${vol}` : ""}`);
+  markets.forEach((m, i) => {
     const isLast = i === markets.length - 1;
     const prefix = isLast ? "└" : "├";
     const label = m.title?.trim() && m.title.trim().toLowerCase() !== e.title.trim().toLowerCase()
@@ -4233,10 +4224,10 @@ function buildEventBlock(
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
     lines.push(`${prefix} ${escapeHtml(label.slice(0, 40))} — YES ${formatNgnPrice(m.outcome1Price)} · NO ${formatNgnPrice(m.outcome2Price)}`);
-    kb.text(`YES — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`🟢 Yes #${i + 1}`, `bm:bet:yes:${shortKey}`)
+      .text(`🔴 No #${i + 1}`, `bm:bet:no:${shortKey}`)
       .row();
-  }
+  });
 }
 
 // ── WC event classification ──────────────────────────────────────────────────
@@ -4277,15 +4268,15 @@ function buildOutrightBlock(lines: string[], kb: InlineKeyboard, e: BayseEvent, 
     `└ Liquidity: ${fmtVol(e.liquidity) || "₦0"} · Ends ${endsDate}`
   );
 
-  // Inline YES/NO buttons per candidate
-  for (const m of slice) {
-    const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+  // Inline YES/NO buttons per candidate — numbered, no label text
+  slice.forEach((m, i) => {
+    const num = (candPage - 1) * WC_CANDIDATES_PER_PAGE + i + 1;
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`YES-${label.slice(0, 15)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-      .text(`NO-${label.slice(0, 15)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+    kb.text(`🟢 Yes #${num}`, `bm:bet:yes:${shortKey}`)
+      .text(`🔴 No #${num}`, `bm:bet:no:${shortKey}`)
       .row();
-  }
+  });
   if (totalCandPages > 1) {
     if (candPage > 1) kb.text(`◀ Prev`, `bm:wc:out:${e.id}:${candPage - 1}`);
     if (candPage < totalCandPages) kb.text(`Next ▶`, `bm:wc:out:${e.id}:${candPage + 1}`);
@@ -4320,15 +4311,12 @@ function buildMatchBlock(lines: string[], kb: InlineKeyboard, e: BayseEvent): vo
 
   lines.push(``, `├ Trades: ${e.totalOrders ?? 0}`, `└ Liquidity: ${fmtVol(e.liquidity) || "₦0"}`);
 
-  // Inline Yes buttons per outcome
-  for (const m of e.markets) {
-    const label = m.title?.trim() && !/^(yes|no)$/i.test(m.title.trim())
-      ? m.title.trim()
-      : (m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.id.slice(0, 6));
+  // Inline Yes buttons per outcome — numbered
+  e.markets.forEach((m, i) => {
     const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
     redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-    kb.text(`Yes-${label.slice(0, 20)}`, `bm:bet:yes:${shortKey}`);
-  }
+    kb.text(`🟢 Yes #${i + 1}`, `bm:bet:yes:${shortKey}`);
+  });
   kb.row();
 }
 
@@ -4389,9 +4377,12 @@ function buildWcPage(allWcEvents: BayseEvent[], page: number): { text: string; k
 // Sports: one block per event — list all markets as text rows, one YES/NO pair per event
 function buildSportsMarketsKeyboard(events: BayseEvent[]): InlineKeyboard {
   const kb = new InlineKeyboard();
+  let num = 0;
   for (const e of events) {
+    const slice = e.markets.slice(0, 3);
     kb.text(`⚽ ${e.title.slice(0, 55)}`, `bm:noop`).row();
-    addMarketsBlock(kb, e, e.markets.slice(0, 3));
+    addMarketsBlock(kb, e, slice, num + 1);
+    num += slice.length;
   }
   kb.text("← Categories", "bm:list");
   return kb;
@@ -4402,14 +4393,15 @@ function buildCategoryMarketsKeyboard(category: string, events: BayseEvent[]): I
   if (category.toUpperCase() === "SPORTS") return buildSportsMarketsKeyboard(events);
 
   const kb = new InlineKeyboard();
+  let num = 0;
   for (const e of events) {
     const sorted = [...e.markets].sort((a, b) => b.outcome1Price - a.outcome1Price).slice(0, 4);
     for (const m of sorted) {
-      const label = m.outcome1Label && !/^(yes|no)$/i.test(m.outcome1Label) ? m.outcome1Label : m.title || "Yes";
+      num++;
       const shortKey = `${e.id.slice(0, 4)}${m.id.slice(0, 4)}`;
       redis.set(`bayse:mkt:${shortKey}`, `${e.id}:${m.id}`, "EX", 3600).catch(() => null);
-      kb.text(`YES — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome1Price)}`, `bm:bet:yes:${shortKey}`)
-        .text(`NO — ${label.slice(0, 18)} ${formatNgnPrice(m.outcome2Price)}`, `bm:bet:no:${shortKey}`)
+      kb.text(`🟢 Yes #${num}`, `bm:bet:yes:${shortKey}`)
+        .text(`🔴 No #${num}`, `bm:bet:no:${shortKey}`)
         .row();
     }
   }

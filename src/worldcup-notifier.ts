@@ -133,10 +133,11 @@ function scheduleMatchAlert(e: BayseEvent): void {
 
 async function pollAndScheduleMatchAlerts(): Promise<void> {
   try {
-    const events = await listBayseEvents({ category: "WORLD CUP", size: 200 });
-    for (const e of events) {
-      if (isMatchEvent(e)) scheduleMatchAlert(e);
-    }
+    const events = await listBayseEvents({ size: 200 });
+    const wcMatches = events.filter(
+      (e) => e.category?.toUpperCase() === "WORLD CUP" && isMatchEvent(e)
+    );
+    for (const e of wcMatches) scheduleMatchAlert(e);
   } catch (err) {
     console.error("[wc-kickoff] Poll failed:", err instanceof Error ? err.message : err);
   }
