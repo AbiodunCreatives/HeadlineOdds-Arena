@@ -2528,6 +2528,11 @@ export async function handleFantasyTextInput(ctx: Context): Promise<boolean> {
     return false;
   }
 
+  // Bayse market bet amount takes priority — don't intercept with arena flows
+  if (await hasBayseCustomBetPending(ctx.from.id)) {
+    return false;
+  }
+
   // Custom arena entry fee (dev users only)
   if (await hasPendingCustomArenaFee(ctx.from.id)) {
     const fee = Number.parseFloat(messageText.replace(/[^0-9.]/g, ""));
